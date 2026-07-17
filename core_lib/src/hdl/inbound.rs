@@ -700,6 +700,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
         }
 
         let offline = location_nearby_connections::OfflineFrame::decode(d2d_msg.message())?;
+        self.process_offline_frame(offline).await
+    }
+
+    /// Dispatch a decrypted OfflineFrame (payload transfers, keep-alives, …).
+    /// Factored out so the bandwidth-upgrade drain can process non-BWU frames the
+    /// phone keeps sending over BLE while the upgrade completes.
+    async fn process_offline_frame(
+        &mut self,
+        offline: OfflineFrame,
+    ) -> Result<(), anyhow::Error> {
         let v1_frame = offline
             .v1
             .as_ref()
@@ -1683,16 +1693,25 @@ impl InboundRequest<crate::hdl::MigratableStream> {
                 Ok(Ok(f)) => f,
                 _ => break,
             };
-            let Some(v1) = offline.v1.as_ref() else { continue };
-            if v1.r#type()
-                != location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation
+            let frame_type = offline.v1.as_ref().map(|v| v.r#type());
+            if frame_type
+                != Some(location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation)
             {
-                debug!("BWU drain: ignoring frame type {:?}", v1.r#type());
+                // The phone keeps sending normal frames (paired-key, etc.) over BLE
+                // until its LAST_WRITE — process them so the sharing handshake
+                // continues correctly after the swap.
+                if let Err(e) = self.process_offline_frame(offline).await {
+                    debug!("BWU drain: error processing non-BWU frame: {e}");
+                }
                 continue;
             }
-            let Some(bwu) = v1.bandwidth_upgrade_negotiation.as_ref() else { continue };
-            match bwu.event_type() {
-                EventType::LastWriteToPriorChannel => {
+            let event = offline
+                .v1
+                .as_ref()
+                .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref())
+                .map(|b| b.event_type());
+            match event {
+                Some(EventType::LastWriteToPriorChannel) => {
                     debug!("BWU drain: peer LAST_WRITE → sending SAFE_TO_CLOSE");
                     let _ = self
                         .encrypt_and_send(&Self::bwu_frame(
@@ -1702,13 +1721,31 @@ impl InboundRequest<crate::hdl::MigratableStream> {
                         ))
                         .await;
                 }
-                EventType::SafeToClosePriorChannel => {
+                Some(EventType::SafeToClosePriorChannel) => {
                     debug!("BWU drain: peer SAFE_TO_CLOSE → done");
                     break;
                 }
                 other => debug!("BWU drain: event {other:?}"),
             }
         }
+
+        // Tell the phone the prior (BLE) channel is closing so it stops pausing the
+        // new channel and resumes immediately (avoids a ~10s phone-side timeout).
+        // Sent plaintext (unencrypted) per the protocol, and given a moment to flush
+        // through the weave bridge before we drop the BLE side.
+        let disc = OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(location_nearby_connections::v1_frame::FrameType::Disconnection.into()),
+                disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    request_safe_to_disconnect: Some(false),
+                    ack_safe_to_disconnect: Some(false),
+                }),
+                ..Default::default()
+            }),
+        };
+        let _ = self.send_frame(disc.encode_to_vec()).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Swap to the TCP channel; the payload loop resumes over Wi-Fi.
         self.socket = crate::hdl::MigratableStream::Tcp(tcp);

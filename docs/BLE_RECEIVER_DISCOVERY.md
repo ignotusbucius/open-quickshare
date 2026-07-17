@@ -7,8 +7,10 @@
 > ([nozwock/packet#140](https://github.com/nozwock/packet/issues/140),
 > [Martichou/rquickshare#425](https://github.com/Martichou/rquickshare/issues/425)).
 >
-> **Status:** working prototype — a real photo transfers end-to-end. See
-> [Limitations & performance](#limitations--performance) for what's left.
+> **Status:** working prototype — real files transfer end-to-end from an off-Wi-Fi
+> Pixel, and the payload is **bandwidth-upgraded to Wi-Fi** so large files are fast
+> (a 20 MB file transfers in seconds). See [Bandwidth upgrade](#7--bandwidth-upgrade-to-wi-fi)
+> and [Limitations & performance](#8--limitations--performance).
 
 ---
 
@@ -244,29 +246,64 @@ flowchart LR
 
 ---
 
-## 7. Limitations & performance
+## 7. Bandwidth upgrade to Wi-Fi
 
-- **Speed.** BLE is inherently slow, and **write-with-response** (used for
-  ordering) adds a round-trip per packet, so throughput is low (tens of KB/s).
-  The proper fix for large files is a **bandwidth upgrade to Wi-Fi-LAN**: once the
-  encrypted session is up, send a `BANDWIDTH_UPGRADE_NEGOTIATION /
-  UPGRADE_PATH_AVAILABLE` frame with our `ip_address` + `wifi_port`; the phone
-  reconnects to the existing TCP listener and streams the payload over Wi-Fi with
-  the **same** UKEY2 keys. The BLE socket only carries the handshake.
-  (Alternatively, replace write-with-response with software packet reordering
-  keyed on the weave counter to recover some speed while keeping BLE-only.)
-- **Re-advertising.** A connectable advertisement is consumed by one connection;
-  the receiver must re-advertise after each disconnect (currently the harness is
-  restarted per transfer, and repeated failed attempts can wedge the phone until
-  a Bluetooth reset).
-- **Single connection.** `weave_session` holds one shared packet channel /
-  notifier; concurrent/repeat connections need per-connection state.
-- **Prototype logging.** Verbose `rx pkt` / `rx msg` / `-> inbound` debug lines
-  should be removed or gated for production.
+BLE is slow (the weave socket + write-with-response is tens of KB/s), so once the
+encrypted connection is up the receiver **upgrades the payload to Wi-Fi-LAN**,
+keeping the same UKEY2 keys and sequence numbers. Only the handshake runs over
+BLE; the file bytes stream over TCP.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Pixel
+    participant L as Linux
+    Note over P,L: encrypted connection established over BLE
+    L-->>P: [BLE, enc] UPGRADE_PATH_AVAILABLE (WIFI_LAN, our ipv4:port)
+    P->>L: [TCP] connect to ip:port
+    P->>L: [TCP, plaintext] CLIENT_INTRODUCTION (endpoint_id)
+    L-->>P: [TCP, plaintext] CLIENT_INTRODUCTION_ACK
+    P->>L: [BLE, enc] LAST_WRITE_TO_PRIOR_CHANNEL
+    L-->>P: [BLE, enc] SAFE_TO_CLOSE_PRIOR_CHANNEL
+    L-->>P: [BLE, plaintext] DISCONNECTION
+    Note over P,L: payload streams over TCP with the same keys/seq
+    P->>L: [TCP, enc] file payload → done
+```
+
+**Key facts** (source-verified against `google/nearby`, confirmed on a Pixel 9 Pro):
+- The **receiver is the initiator** — it hosts the TCP socket and offers the path.
+- Sequence numbers **continue** across the swap (no reset) and WIFI_LAN keeps
+  encryption **on**, so the receive handshake just swaps its socket
+  (`MigratableStream`) and keeps all crypto state.
+- The intro/ack and the final DISCONNECTION are **plaintext** — they bypass the
+  cipher and must not touch the sequence counters.
+- While draining the old channel the phone keeps sending normal frames
+  (paired-key, etc.) over BLE until its LAST_WRITE — these must be **processed**,
+  not dropped.
+- The final plaintext **DISCONNECTION is required**: without it the phone keeps
+  the new channel paused for a ~10s timeout before resuming.
+
+**Result:** a 20 MB file transfers in seconds over Wi-Fi.
 
 ---
 
-## 8. References
+## 8. Limitations & performance
+
+- **Connection latency, not transfer.** Once the phone connects, the handshake +
+  upgrade take ~1s and the file runs at Wi-Fi speed. The user-visible delay
+  (~15–20s) is almost entirely **BLE discovery + the GATT service discovery the
+  phone does on connect** — largely phone-side, and about the floor for this
+  transport. Fast advertising (100–150ms) helps only a little.
+- **Single connection.** `weave_session` holds one shared packet channel /
+  notifier; concurrent/repeat connections need per-connection state.
+- **Prototype logging.** Verbose `rx pkt` / `rx msg` / `-> inbound` / `BWU drain`
+  debug lines should be removed or gated for production.
+- **Not yet wired into the Packet GTK app** — this lives in `rqs_lib`; Packet
+  needs its dependency bumped to this fork.
+
+---
+
+## 9. References
 
 - `google/nearby` — `connections/implementation/mediums/ble/*`,
   `internal/weave/packet.{h,cc}`, `connections/implementation/offline_frames.cc`,

@@ -163,6 +163,10 @@ impl ReceiverAdvertiser {
                 advertisement_type: bluer::adv::Type::Peripheral,
                 service_data: [(uuid, self.service_data.clone())].into(),
                 discoverable: Some(true),
+                // Advertise fast so the phone discovers and connects quickly
+                // (BlueZ defaults to a slow ~1-2s interval).
+                min_interval: Some(std::time::Duration::from_millis(100)),
+                max_interval: Some(std::time::Duration::from_millis(150)),
                 ..Default::default()
             };
             match self.adapter.advertise(adv).await {
@@ -173,7 +177,7 @@ impl ReceiverAdvertiser {
                             info!("{RX_INNER_NAME}: tracker cancelled, returning");
                             return Ok(());
                         }
-                        _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
                             drop(handle);
                         }
                     }

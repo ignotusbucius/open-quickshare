@@ -13,7 +13,7 @@ use p256::{EncodedPoint, PublicKey};
 use prost::Message;
 use rand::Rng;
 use sha2::{Digest, Sha256, Sha512};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::{Receiver, Sender};
 
@@ -48,15 +48,15 @@ const SANE_FRAME_LENGTH: i32 = 5 * 1024 * 1024;
 const SANITY_DURATION: Duration = Duration::from_micros(10);
 
 #[derive(Debug)]
-pub struct InboundRequest {
-    socket: TcpStream,
+pub struct InboundRequest<S = TcpStream> {
+    socket: S,
     pub state: InnerState,
     sender: Sender<ChannelMessage>,
     receiver: Receiver<ChannelMessage>,
 }
 
-impl InboundRequest {
-    pub fn new(socket: TcpStream, id: String, sender: Sender<ChannelMessage>) -> Self {
+impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
+    pub fn new(socket: S, id: String, sender: Sender<ChannelMessage>) -> Self {
         let receiver = sender.subscribe();
 
         Self {
@@ -763,6 +763,12 @@ impl InboundRequest {
             .as_ref()
             .ok_or_else(|| anyhow!("Missing required fields"))?;
 
+        debug!(
+            "process_transfer_setup: state={:?} inner frame type={:?}",
+            self.state.state,
+            v1_frame.r#type()
+        );
+
         if v1_frame.r#type() == sharing_nearby::v1_frame::FrameType::Cancel {
             info!("Transfer canceled");
             self.update_state(
@@ -801,7 +807,16 @@ impl InboundRequest {
             }
             TransferState::ReceivedPairedKeyResult => {
                 debug!("Processing State::ReceivedPairedKeyResult");
-                self.process_introduction(v1_frame).await?;
+                // Newer senders (Pixel) may interleave extra frames before the
+                // introduction; wait for the actual introduction instead of erroring.
+                if v1_frame.introduction.is_some() {
+                    self.process_introduction(v1_frame).await?;
+                } else {
+                    debug!(
+                        "Awaiting introduction; ignoring frame type={:?}",
+                        v1_frame.r#type()
+                    );
+                }
             }
             _ => {
                 info!(

@@ -13,7 +13,6 @@ use p256::{PublicKey, SecretKey};
 use rand::{Rng, RngCore};
 use sha2::Sha256;
 use tokio::io::AsyncReadExt;
-use tokio::net::TcpStream;
 
 use crate::CUSTOM_DOWNLOAD;
 
@@ -118,8 +117,8 @@ pub fn parse_mdns_endpoint_info(encoded_str: &str) -> Result<(DeviceType, String
     Ok((DeviceType::from_raw_value(device_type), device_name))
 }
 
-pub async fn stream_read_exact(
-    socket: &mut TcpStream,
+pub async fn stream_read_exact<S: tokio::io::AsyncRead + Unpin>(
+    socket: &mut S,
     buf: &mut [u8],
 ) -> Result<(), anyhow::Error> {
     match socket.read_exact(buf).await {

@@ -155,18 +155,37 @@ impl ReceiverAdvertiser {
         );
 
         let uuid = Uuid::from_u16(QS_SERVICE_UUID);
-        let adv = Advertisement {
-            // Connectable, matching how the phone advertises as a receiver.
-            advertisement_type: bluer::adv::Type::Peripheral,
-            service_data: [(uuid, self.service_data.clone())].into(),
-            discoverable: Some(true),
-            ..Default::default()
-        };
-        let handle = self.adapter.advertise(adv).await?;
-        ctk.cancelled().await;
-        info!("{RX_INNER_NAME}: tracker cancelled, returning");
-        drop(handle);
-
-        Ok(())
+        // A connectable advertising set is consumed when a phone connects, so
+        // re-register periodically to stay discoverable for further transfers.
+        loop {
+            let adv = Advertisement {
+                // Connectable, matching how the phone advertises as a receiver.
+                advertisement_type: bluer::adv::Type::Peripheral,
+                service_data: [(uuid, self.service_data.clone())].into(),
+                discoverable: Some(true),
+                ..Default::default()
+            };
+            match self.adapter.advertise(adv).await {
+                Ok(handle) => {
+                    tokio::select! {
+                        _ = ctk.cancelled() => {
+                            drop(handle);
+                            info!("{RX_INNER_NAME}: tracker cancelled, returning");
+                            return Ok(());
+                        }
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                            drop(handle);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("{RX_INNER_NAME}: advertise failed ({e}); retrying");
+                    tokio::select! {
+                        _ = ctk.cancelled() => return Ok(()),
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(3)) => {}
+                    }
+                }
+            }
+        }
     }
 }

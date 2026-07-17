@@ -200,9 +200,10 @@ impl RQS {
                 // socket which we bridge to the inbound handshake.
                 let gatt_advert = advert.clone();
                 let gatt_sender = self.message_sender.clone();
+                let gatt_tcp_port = binded_addr.port();
                 let gctk = ctoken.clone();
                 tracker.spawn(async move {
-                    match crate::hdl::ReceiverGattServer::new(gatt_advert, gatt_sender).await {
+                    match crate::hdl::ReceiverGattServer::new(gatt_advert, gatt_sender, gatt_tcp_port).await {
                         Ok(srv) => {
                             if let Err(e) = srv.run(gctk).await {
                                 error!("ReceiverGattServer: {}", e);

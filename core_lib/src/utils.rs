@@ -201,6 +201,25 @@ pub fn get_download_dir() -> PathBuf {
     Path::new("/").to_path_buf()
 }
 
+/// First non-loopback IPv4 address of this host (used to advertise our Wi-Fi-LAN
+/// endpoint in a bandwidth-upgrade). Prefers private LAN ranges when several exist.
+pub fn local_ipv4() -> Option<[u8; 4]> {
+    let addrs = get_if_addrs().ok()?;
+    let mut fallback: Option<[u8; 4]> = None;
+    for ia in addrs {
+        if let std::net::IpAddr::V4(v4) = ia.ip() {
+            if v4.is_loopback() || v4.is_link_local() {
+                continue;
+            }
+            if v4.is_private() {
+                return Some(v4.octets());
+            }
+            fallback.get_or_insert(v4.octets());
+        }
+    }
+    fallback
+}
+
 pub fn is_not_self_ip(ip_address: &Ipv4Addr) -> bool {
     if let Ok(if_addrs) = get_if_addrs() {
         for if_addr in if_addrs {

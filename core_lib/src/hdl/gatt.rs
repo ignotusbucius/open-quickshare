@@ -47,12 +47,14 @@ pub struct ReceiverGattServer {
     adapter: Arc<Adapter>,
     advertisement: Vec<u8>,
     sender: Sender<ChannelMessage>,
+    tcp_port: u16,
 }
 
 impl ReceiverGattServer {
     pub async fn new(
         advertisement: Vec<u8>,
         sender: Sender<ChannelMessage>,
+        tcp_port: u16,
     ) -> Result<Self, anyhow::Error> {
         let session = bluer::Session::new().await?;
         let adapter = session.default_adapter().await?;
@@ -62,6 +64,7 @@ impl ReceiverGattServer {
             adapter: Arc::new(adapter),
             advertisement,
             sender,
+            tcp_port,
         })
     }
 
@@ -78,6 +81,7 @@ impl ReceiverGattServer {
         let pkt_rx: Arc<Mutex<Option<UnboundedReceiver<Vec<u8>>>>> =
             Arc::new(Mutex::new(Some(pkt_rx)));
         let sender = self.sender.clone();
+        let tcp_port = self.tcp_port;
 
         let app = Application {
             services: vec![Service {
@@ -126,7 +130,7 @@ impl ReceiverGattServer {
                                 let pkt_rx = pkt_rx.clone();
                                 let sender = sender.clone();
                                 Box::pin(async move {
-                                    weave_session(notifier, pkt_rx, sender).await;
+                                    weave_session(notifier, pkt_rx, sender, tcp_port).await;
                                 })
                             })),
                             ..Default::default()
@@ -159,6 +163,7 @@ async fn weave_session(
     mut notifier: CharacteristicNotifier,
     pkt_rx: Arc<Mutex<Option<UnboundedReceiver<Vec<u8>>>>>,
     sender: Sender<ChannelMessage>,
+    tcp_port: u16,
 ) {
     let mut guard = pkt_rx.lock().await;
     let Some(rx) = guard.as_mut() else {
@@ -205,13 +210,24 @@ async fn weave_session(
     let (mut weave_rd, mut weave_wr) = tokio::io::split(weave_side);
     let isender = sender.clone();
     tokio::spawn(async move {
-        let mut ir = InboundRequest::new(inbound_side, "ble-weave".to_string(), isender);
+        let mut ir = InboundRequest::new(
+            crate::hdl::MigratableStream::Ble(inbound_side),
+            "ble-weave".to_string(),
+            isender,
+        );
+        ir.set_bwu_tcp_port(tcp_port);
         loop {
             if let Err(e) = ir.handle().await {
                 if !matches!(e.downcast_ref(), Some(AppError::NotAnError)) {
                     debug!("{INNER_NAME}: weave inbound ended: {e}");
                 }
                 break;
+            }
+            // Once the encrypted connection is up, upgrade the payload to Wi-Fi.
+            if ir.take_bwu_pending() {
+                if let Err(e) = ir.do_bwu().await {
+                    warn!("{INNER_NAME}: BWU failed, staying on BLE: {e}");
+                }
             }
         }
     });

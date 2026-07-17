@@ -19,6 +19,10 @@ pub use blea::*;
 mod gatt;
 #[cfg(all(feature = "experimental", target_os = "linux"))]
 pub use gatt::*;
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+mod migratable;
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+pub use migratable::*;
 mod inbound;
 pub use inbound::*;
 pub mod info;

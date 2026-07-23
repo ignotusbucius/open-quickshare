@@ -47,6 +47,43 @@ type HmacSha256 = Hmac<Sha256>;
 const SANE_FRAME_LENGTH: i32 = 5 * 1024 * 1024;
 const SANITY_DURATION: Duration = Duration::from_micros(10);
 
+#[cfg(test)]
+mod dest_name_tests {
+    use super::dest_file_name;
+
+    #[test]
+    fn fixes_generic_extension_from_mime() {
+        // The observed case: a PDF sent as a .tmp cache file.
+        assert_eq!(dest_file_name("cache123.tmp", "application/pdf"), "cache123.pdf");
+        // No extension + a known MIME type → gains the right one.
+        assert!(dest_file_name("noext", "application/pdf").ends_with(".pdf"));
+        // A good, specific extension is left alone.
+        assert_eq!(dest_file_name("photo.jpg", "image/jpeg"), "photo.jpg");
+        assert_eq!(dest_file_name("real.pdf", "application/pdf"), "real.pdf");
+        // Unknown/default MIME type → keep the sender's name untouched.
+        assert_eq!(dest_file_name("data.tmp", "application/octet-stream"), "data.tmp");
+    }
+}
+
+/// Pick the on-disk name for a received file: keep the sender's name, but if its
+/// extension is missing or generic (e.g. a `.tmp` cache file), fix it from the
+/// declared MIME type so e.g. a PDF sent as `cache123.tmp` lands as `cache123.pdf`.
+fn dest_file_name(name: &str, mime_type: &str) -> String {
+    let path = std::path::Path::new(name);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    let generic = matches!(ext.as_deref(), None | Some("tmp") | Some("bin") | Some("dat"));
+    if !generic || mime_type.is_empty() || mime_type == "application/octet-stream" {
+        return name.to_string();
+    }
+    match mime_guess::get_mime_extensions_str(mime_type).and_then(|exts| exts.first()) {
+        Some(good) => path.with_extension(good).to_string_lossy().into_owned(),
+        None => name.to_string(),
+    }
+}
+
 /// If `buf` begins with a complete `[len][OfflineFrame]` that is a bandwidth-upgrade
 /// CLIENT_INTRODUCTION, returns the peer's endpoint_id. Used by the TCP server to
 /// route an upgraded connection to its in-flight BLE session instead of treating it
@@ -1100,10 +1137,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             let mut total_bytes: u64 = 0;
 
             for file in &introduction.file_metadata {
-                info!("File name: {}", file.name());
+                let resolved_name = dest_file_name(file.name(), file.mime_type());
+                info!("File name: {} (as {})", file.name(), resolved_name);
 
                 let mut dest = get_download_dir();
-                dest.push(file.name());
+                dest.push(&resolved_name);
 
                 info!("Destination: {:?}", dest);
                 if dest.exists() {
@@ -1116,7 +1154,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                         // lorem (1).txt
                         // ...
                         let incremented_file_path = {
-                            let file_path = PathBuf::from(file.name());
+                            let file_path = PathBuf::from(&resolved_name);
 
                             let incremented_file_stem = format!(
                                 "{} ({counter})",
@@ -1155,7 +1193,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                 };
                 total_bytes += info.total_size as u64;
                 self.state.transferred_files.insert(file.payload_id(), info);
-                files_name.push(file.name().to_owned());
+                files_name.push(resolved_name.clone());
             }
 
             let metadata = TransferMetadata {

@@ -12,6 +12,19 @@
   </p>
 </div>
 
+> ⚠️ **About this fork.** A fork of [rquickshare](https://github.com/Martichou/rquickshare)
+> that makes a Linux device work as a **Bluetooth** Quick Share receiver — not just Wi‑Fi.
+> Built on [martinalderson](https://github.com/martinalderson/rquickshare)'s `ble-receiver`
+> branch (the initial connect‑over‑BLE‑then‑upgrade‑to‑Wi‑Fi receiver), it adds:
+>
+> - **LE L2CAP fast‑connect** — skips the slow per‑connection GATT database walk that made BLE connects take ~10 s.
+> - **Spec‑accurate two‑tier advertising** — a legacy‑sized advertisement header plus the full advertisement over GATT, so modern phones (e.g. Pixel) discover the device reliably; the bloom filter is validated against Google's own implementation.
+> - **Reliability fixes** — advertising lifecycle, radio arbitration between scanning/advertising/connections, and a robust Wi‑Fi bandwidth upgrade with BLE fallback and retry.
+>
+> Net result: a phone can discover and send to this Linux device over Bluetooth
+> without both first being on the same Wi‑Fi, and it connects noticeably faster.
+> Everything else is upstream rquickshare.
+
 ![demo image](.github/demo.png)
 
 Installation
@@ -114,7 +127,13 @@ $ nix-shell -p rquickshare
 Limitations
 --------------------------
 
-- **Wi-Fi LAN only**. Your devices need to be on the same network for this app to work.
+- **Receiving no longer requires the same Wi-Fi** (Linux, experimental). With the
+  BLE receiver a phone can discover and connect to this device over Bluetooth LE
+  without both first being on the same network; the transfer then upgrades to
+  Wi-Fi LAN for speed, and falls back to (slower) BLE when no shared network is
+  available.
+- **Sending still uses Wi-Fi LAN.** Discovering a device to send *to* is done over
+  mDNS, so the target must be reachable on the same network.
 
 FAQ
 --------------------------

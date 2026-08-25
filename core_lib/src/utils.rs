@@ -81,6 +81,13 @@ pub fn gen_mdns_name(endpoint_id: [u8; 4]) -> String {
     URL_SAFE_NO_PAD.encode(&name_b)
 }
 
+/// The 16 identity bytes (2-byte salt + 14-byte metadata-key hash) this run
+/// presents in every advertisement. Random per run, but the *same* over mDNS
+/// and BLE: the phone can't tell that two advertisements with different
+/// identity bytes are the same device, and lists it twice.
+pub static ENDPOINT_IDENTITY: once_cell::sync::Lazy<[u8; 16]> =
+    once_cell::sync::Lazy::new(|| rand::rng().random());
+
 pub fn gen_mdns_endpoint_info(device_type: u8, device_name: &str) -> String {
     let mut record = Vec::new();
 
@@ -88,8 +95,7 @@ pub fn gen_mdns_endpoint_info(device_type: u8, device_name: &str) -> String {
     // Device types: unknown=0, phone=1, tablet=2, laptop=3
     record.push(device_type << 1);
 
-    let unknown_bytes = rand::rng().random::<[u8; 16]>();
-    record.extend_from_slice(&unknown_bytes);
+    record.extend_from_slice(ENDPOINT_IDENTITY.as_slice());
 
     let device_name = device_name.as_bytes();
     let length = device_name.len() as u8;

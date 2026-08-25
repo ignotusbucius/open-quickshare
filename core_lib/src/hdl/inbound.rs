@@ -149,6 +149,11 @@ pub struct InboundRequest<S = TcpStream> {
     /// Set by the state machine when it's time to run the bandwidth-upgrade
     /// handoff; consumed by the BLE session loop (which owns a MigratableStream).
     bwu_pending: bool,
+    /// Wi-Fi upgrade retries used so far (the phone's Wi-Fi often returns a
+    /// few seconds into a BLE-only transfer).
+    bwu_attempts: u8,
+    /// When to re-offer the Wi-Fi upgrade, if scheduled.
+    bwu_retry_at: Option<tokio::time::Instant>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
@@ -169,6 +174,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             receiver,
             bwu_tcp_port: None,
             bwu_pending: false,
+            bwu_attempts: 0,
+            bwu_retry_at: None,
         }
     }
 
@@ -180,6 +187,33 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
     /// Consume the "run the bandwidth upgrade now" flag.
     pub fn take_bwu_pending(&mut self) -> bool {
         std::mem::take(&mut self.bwu_pending)
+    }
+
+    /// Schedule a Wi-Fi upgrade re-offer with backoff. A transfer that fell
+    /// back to BLE stays painfully slow otherwise; the phone's Wi-Fi usually
+    /// comes back a few seconds after it leaves the share-sheet scan.
+    fn schedule_bwu_retry(&mut self) {
+        const DELAYS: [u64; 3] = [6, 15, 30];
+        if self.bwu_tcp_port.is_none() {
+            return;
+        }
+        let Some(delay) = DELAYS.get(self.bwu_attempts as usize) else {
+            return;
+        };
+        self.bwu_attempts += 1;
+        self.bwu_retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(*delay));
+        info!("BWU: will re-offer the Wi-Fi upgrade in {delay}s");
+    }
+
+    /// True once a scheduled upgrade re-offer is due (consumes the schedule).
+    pub fn bwu_retry_due(&mut self) -> bool {
+        match self.bwu_retry_at {
+            Some(at) if tokio::time::Instant::now() >= at => {
+                self.bwu_retry_at = None;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Build a BANDWIDTH_UPGRADE_NEGOTIATION OfflineFrame for the given event.
@@ -995,6 +1029,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                 trace!("Sending keepalive");
                 self.send_keepalive(true).await?;
             }
+            location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation => {
+                // A BWU frame outside do_bwu: the phone finishing (or retrying)
+                // the channel switch late. Answer LAST_WRITE so it can close
+                // its prior channel instead of timing the session out.
+                use location_nearby_connections::bandwidth_upgrade_negotiation_frame::EventType;
+                let event = v1_frame
+                    .bandwidth_upgrade_negotiation
+                    .as_ref()
+                    .map(|b| b.event_type());
+                debug!("Late BWU frame: {event:?}");
+                if event == Some(EventType::LastWriteToPriorChannel) {
+                    let frame =
+                        Self::bwu_frame(EventType::SafeToClosePriorChannel, None, None);
+                    let _ = self.encrypt_and_send(&frame).await;
+                }
+            }
             _ => {
                 error!("Unhandled offline frame encrypted: {:?}", offline);
             }
@@ -1692,21 +1742,63 @@ impl InboundRequest<crate::hdl::MigratableStream> {
     pub async fn do_bwu(&mut self) -> Result<(), anyhow::Error> {
         use location_nearby_connections::bandwidth_upgrade_negotiation_frame::EventType;
 
+        if matches!(self.socket, crate::hdl::MigratableStream::Tcp(_)) {
+            return Ok(());
+        }
+
         let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
         let port = listener.local_addr()?.port();
 
         // Offer WIFI_LAN over the encrypted BLE channel.
         self.send_upgrade_path_available(port).await?;
 
-        // Wait for the phone to connect over TCP; if it doesn't, stay on BLE.
-        let mut tcp = match tokio::time::timeout(Duration::from_secs(15), listener.accept()).await {
-            Ok(Ok((s, peer))) => {
-                info!("BWU: phone connected over TCP from {peer}");
-                s
-            }
-            _ => {
-                warn!("BWU: no TCP upgrade within timeout; staying on BLE");
-                return Ok(());
+        // Wait for the phone to connect over TCP -- while KEEPING the BLE
+        // channel read: a phone whose Wi-Fi is still down reports
+        // UPGRADE_FAILURE over BLE and then waits for the session to carry
+        // on. Blocking deaf in accept() here stalled exactly those transfers
+        // to death. Generous deadline: rejoining Wi-Fi can take beyond 15s.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let mut tcp = loop {
+            tokio::select! {
+                accepted = listener.accept() => match accepted {
+                    Ok((s, peer)) => {
+                        info!("BWU: phone connected over TCP from {peer}");
+                        break s;
+                    }
+                    Err(e) => {
+                        warn!("BWU: TCP accept failed ({e}); staying on BLE");
+                        self.schedule_bwu_retry();
+                        return Ok(());
+                    }
+                },
+                frame = self.read_encrypted_offline_frame() => {
+                    let offline = frame?;
+                    let is_upgrade_failure = offline
+                        .v1
+                        .as_ref()
+                        .filter(|v| {
+                            v.r#type()
+                                == location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation
+                        })
+                        .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref())
+                        .map(|b| b.event_type() == EventType::UpgradeFailure)
+                        .unwrap_or(false);
+                    if is_upgrade_failure {
+                        warn!("BWU: phone reported UPGRADE_FAILURE; continuing over BLE");
+                        self.schedule_bwu_retry();
+                        return Ok(());
+                    }
+                    // Keep the handshake moving (paired-key frames, keep-alives,
+                    // even the consent response arrive here).
+                    if let Err(e) = self.process_offline_frame(offline).await {
+                        debug!("BWU wait: error processing frame: {e}");
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    warn!("BWU: no TCP upgrade within timeout; staying on BLE");
+                    self.schedule_bwu_retry();
+                    return Ok(());
+                }
             }
         };
 

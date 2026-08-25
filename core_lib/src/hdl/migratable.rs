@@ -12,6 +12,8 @@ use tokio::net::TcpStream;
 pub enum MigratableStream {
     /// BLE weave data socket (one half of an in-memory duplex).
     Ble(DuplexStream),
+    /// BLE L2CAP connection-oriented channel.
+    L2cap(bluer::l2cap::Stream),
     /// Wi-Fi-LAN TCP socket (after a bandwidth upgrade).
     Tcp(TcpStream),
 }
@@ -24,6 +26,7 @@ impl AsyncRead for MigratableStream {
     ) -> Poll<std::io::Result<()>> {
         match self.get_mut() {
             MigratableStream::Ble(s) => Pin::new(s).poll_read(cx, buf),
+            MigratableStream::L2cap(s) => Pin::new(s).poll_read(cx, buf),
             MigratableStream::Tcp(s) => Pin::new(s).poll_read(cx, buf),
         }
     }
@@ -37,6 +40,7 @@ impl AsyncWrite for MigratableStream {
     ) -> Poll<std::io::Result<usize>> {
         match self.get_mut() {
             MigratableStream::Ble(s) => Pin::new(s).poll_write(cx, buf),
+            MigratableStream::L2cap(s) => Pin::new(s).poll_write(cx, buf),
             MigratableStream::Tcp(s) => Pin::new(s).poll_write(cx, buf),
         }
     }
@@ -44,6 +48,7 @@ impl AsyncWrite for MigratableStream {
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match self.get_mut() {
             MigratableStream::Ble(s) => Pin::new(s).poll_flush(cx),
+            MigratableStream::L2cap(s) => Pin::new(s).poll_flush(cx),
             MigratableStream::Tcp(s) => Pin::new(s).poll_flush(cx),
         }
     }
@@ -51,6 +56,7 @@ impl AsyncWrite for MigratableStream {
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
         match self.get_mut() {
             MigratableStream::Ble(s) => Pin::new(s).poll_shutdown(cx),
+            MigratableStream::L2cap(s) => Pin::new(s).poll_shutdown(cx),
             MigratableStream::Tcp(s) => Pin::new(s).poll_shutdown(cx),
         }
     }

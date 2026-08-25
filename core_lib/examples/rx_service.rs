@@ -22,16 +22,19 @@ async fn main() -> Result<(), anyhow::Error> {
         })
         .init();
 
-    let download_dir = PathBuf::from(
-        "/tmp/claude-1000/-home-martin-oss-source-packet/6d421b9d-5f3a-44f4-84f2-92b8a92b8649/scratchpad/received",
-    );
+    let download_dir = PathBuf::from(std::env::var("RQS_DOWNLOAD_DIR").unwrap_or_else(|_| {
+        format!(
+            "{}/Downloads/QuickShare",
+            std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string())
+        )
+    }));
     std::fs::create_dir_all(&download_dir).ok();
 
     let mut rqs = RQS::new(
         Visibility::Visible,
         None,
         Some(download_dir.clone()),
-        Some("Packet Linux RX".to_string()),
+        Some(std::env::var("RQS_DEVICE_NAME").unwrap_or_else(|_| "Bazzite PC".to_string())),
     );
     rqs.run().await?;
     println!(

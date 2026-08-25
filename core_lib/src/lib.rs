@@ -187,13 +187,48 @@ impl RQS {
             if *self.visibility_receiver.borrow() != Visibility::Invisible {
                 let rx_endpoint_id: [u8; 4] = endpoint_id[..4].try_into()?;
                 let rx_device_name = DEVICE_NAME.read().unwrap().clone();
+
+                // L2CAP CoC listener: phones that support it connect straight
+                // to this PSM and skip GATT service discovery -- the slow part
+                // of every BLE connect. `PACKET_BLE_L2CAP=off` disables it.
+                let l2cap = if std::env::var("PACKET_BLE_L2CAP")
+                    .map(|v| v.eq_ignore_ascii_case("off"))
+                    .unwrap_or(false)
+                {
+                    info!("L2capServer: disabled by PACKET_BLE_L2CAP=off");
+                    None
+                } else {
+                    match crate::hdl::L2capServer::bind().await {
+                        Ok((server, psm)) => {
+                            info!("L2capServer: listening on PSM {psm}");
+                            Some((server, psm))
+                        }
+                        Err(e) => {
+                            warn!("Couldn't start the L2CAP server ({e}); phones will use GATT");
+                            None
+                        }
+                    }
+                };
+                let l2cap_psm = l2cap.as_ref().map(|(_, psm)| *psm);
+
                 // Same advertisement bytes are used for the BLE advert and served
                 // over GATT slot 0, so the phone reads a consistent endpoint.
                 let advert = crate::hdl::receiver_service_data(
                     rx_endpoint_id,
                     crate::utils::DeviceType::Laptop as u8,
                     &rx_device_name,
+                    l2cap_psm,
                 );
+
+                if let Some((server, _)) = l2cap {
+                    let l2cap_advert = advert.clone();
+                    let l2cap_sender = self.message_sender.clone();
+                    let l2cap_tcp_port = binded_addr.port();
+                    let lctk = ctoken.clone();
+                    tracker.spawn(async move {
+                        server.run(l2cap_advert, l2cap_sender, l2cap_tcp_port, lctk).await;
+                    });
+                }
 
                 // GATT server: when the phone selects us it opens a GATT connection,
                 // reads slot 0 for our advertisement, then drives the weave data
@@ -220,6 +255,7 @@ impl RQS {
                         rx_endpoint_id,
                         crate::utils::DeviceType::Laptop as u8,
                         &rx_device_name,
+                        l2cap_psm,
                     )
                     .await
                     {

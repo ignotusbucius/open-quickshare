@@ -111,7 +111,7 @@ const BWU_OFFER_TIMEOUT: Duration = Duration::from_secs(6);
 /// abort cleanly instead of hanging the transfer (and the UI).
 const CHUNK_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum OutboundPayload {
     Files(Vec<String>),
 }
@@ -141,6 +141,7 @@ pub struct OutboundRequest<S = TcpStream> {
     join_guard: Option<crate::hdl::JoinGuard>,
 }
 
+#[allow(private_bounds)]
 impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
     pub fn new(
         endpoint_id: [u8; 4],

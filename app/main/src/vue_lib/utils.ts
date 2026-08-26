@@ -134,14 +134,20 @@ async function sendInfo(vm: TauriVM, eid: string) {
 	if (vm.outboundPayload === undefined) return;
 
 	const ei = vm.endpointsInfo.find((el) => el.id === eid);
-	if (!ei || !ei.ip || !ei.port) return;
+	if (!ei) return;
 
-	const msg: SendInfo = {
+	// A recipient discovered over Bluetooth carries a `ble_addr` instead of an
+	// ip/port; send it over BLE (the library dials and upgrades from there).
+	const isBle = !!(ei as any).ble_addr;
+	if (!isBle && (!ei.ip || !ei.port)) return;
+
+	const msg = {
 		id: ei.id,
 		name: ei.name ?? 'Unknown',
-		addr: ei.ip + ":" + ei.port,
+		addr: (ei.ip && ei.port) ? (ei.ip + ":" + ei.port) : "",
 		ob: vm.outboundPayload,
-	};
+		ble: isBle,
+	} as SendInfo;
 
 	await vm.invoke('send_payload', { message: msg });
 }
@@ -182,7 +188,7 @@ async function getDownloadPath(vm: TauriVM) {
 
 async function getLatestVersion(vm: TauriVM) {
 	try {
-		const response = await fetch('https://api.github.com/repos/martichou/rquickshare/releases/latest');
+		const response = await fetch('https://api.github.com/repos/ignotusbucius/open-quickshare/releases/latest');
 		if (!response.ok) {
 			throw new Error(`Error: ${response.status} ${response.statusText}`);
 		}

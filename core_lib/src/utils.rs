@@ -8,6 +8,7 @@ use bytes::Bytes;
 use get_if_addrs::{IfAddr, get_if_addrs};
 use hkdf::Hkdf;
 use num_bigint::{BigUint, ToBigInt};
+use serde::{Deserialize, Serialize};
 use p256::elliptic_curve::rand_core::OsRng;
 use p256::{PublicKey, SecretKey};
 use rand::{Rng, RngCore};
@@ -16,7 +17,7 @@ use tokio::io::AsyncReadExt;
 
 use crate::CUSTOM_DOWNLOAD;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub enum DeviceType {
     Unknown = 0,
@@ -38,7 +39,7 @@ impl DeviceType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteDeviceInfo {
     pub name: String,
     pub device_type: DeviceType,

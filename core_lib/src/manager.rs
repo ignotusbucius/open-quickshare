@@ -10,7 +10,7 @@ use crate::utils::RemoteDeviceInfo;
 
 const INNER_NAME: &str = "TcpServer";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SendInfo {
     pub id: String,
     pub name: String,
@@ -20,6 +20,7 @@ pub struct SendInfo {
     /// discovered over BLE. The send path re-scans for it by `name` (its LE
     /// address and PSM rotate) and dials the fresh target. `addr`/`id` may be a
     /// placeholder in this case. Ignored on non-Linux / non-experimental builds.
+    #[serde(default)]
     pub ble: bool,
 }
 

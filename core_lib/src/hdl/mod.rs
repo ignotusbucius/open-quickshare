@@ -46,7 +46,7 @@ mod outbound;
 pub use outbound::*;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TransferState {
     #[default]
     Initial,
@@ -113,7 +113,7 @@ pub enum TextPayloadInfo {
     Wifi((i64, String, SecurityType)), // id, ssid, security type
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TextPayloadType {
     Url,
     Text,

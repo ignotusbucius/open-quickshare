@@ -8,8 +8,8 @@ extern crate log;
 
 use std::sync::{Arc, Mutex};
 
-use rqs_lib::channel::{ChannelDirection, ChannelMessage};
-use rqs_lib::{EndpointInfo, SendInfo, State, Visibility, RQS};
+use rqs_lib::channel::ChannelMessage;
+use rqs_lib::{EndpointInfo, SendInfo, TransferState, Visibility, RQS};
 use store::get_startminimized;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
@@ -28,9 +28,12 @@ use crate::store::{
 };
 
 mod cmds;
+mod dto;
 mod logger;
 mod notification;
 mod store;
+
+use crate::dto::FrontChannelMessage;
 
 pub struct AppState {
     pub message_sender: broadcast::Sender<ChannelMessage>,
@@ -80,7 +83,7 @@ async fn main() -> Result<(), anyhow::Error> {
             init_default(app.app_handle());
 
             // Initialize system Tray
-            let name = MenuItemBuilder::new("RQuickShare")
+            let name = MenuItemBuilder::new("Open QuickShare")
                 .enabled(false)
                 .build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
@@ -127,7 +130,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 tauri::async_runtime::block_on(async move {
                     trace!("Beginning of RQS start");
                     // Start the RQuickShare service
-                    let mut rqs = RQS::new(visibility, port_number, download_path);
+                    let mut rqs = RQS::new(visibility, port_number, download_path, None);
                     let (sender_file, ble_receiver) = rqs.run().await.unwrap();
 
                     // Define state for tauri app
@@ -191,14 +194,10 @@ fn spawn_receiver_tasks(app_handle: &AppHandle) {
 
             match rinfo {
                 Ok(info) => {
-                    if info.state.as_ref().unwrap_or(&State::Initial)
-                        == &State::WaitingForUserConsent
+                    if FrontChannelMessage::lib_state(&info)
+                        == Some(TransferState::WaitingForUserConsent)
                     {
-                        let name = info
-                            .meta
-                            .as_ref()
-                            .and_then(|meta| meta.source.as_ref())
-                            .map(|source| source.name.clone())
+                        let name = FrontChannelMessage::lib_source_name(&info)
                             .unwrap_or_else(|| "Unknown".to_string());
                         send_request_notification(name, info.id.clone(), &capp_handle);
                     }
@@ -291,12 +290,14 @@ fn handle_window_event(w: &Window, event: &WindowEvent) {
 }
 
 fn rs2js_channelmessage(message: ChannelMessage, manager: &AppHandle) {
-    if message.direction == ChannelDirection::FrontToLib {
+    // Only library → frontend messages are forwarded; convert to the flat
+    // shape the Vue UI expects.
+    let Some(front) = FrontChannelMessage::from_lib(message) else {
         return;
-    }
+    };
 
-    info!("rs2js_channelmessage: {:?}", &message);
-    manager.emit("rs2js_channelmessage", &message).unwrap();
+    info!("rs2js_channelmessage: {:?}", &front);
+    manager.emit("rs2js_channelmessage", &front).unwrap();
 }
 
 fn rs2js_endpointinfo(message: EndpointInfo, manager: &AppHandle) {

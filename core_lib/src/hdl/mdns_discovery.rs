@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::utils::{is_not_self_ip, parse_mdns_endpoint_info};
 use crate::DeviceType;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct EndpointInfo {
     pub fullname: String,
     pub id: String,

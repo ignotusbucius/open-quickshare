@@ -1,10 +1,9 @@
 #[cfg(target_os = "linux")]
 use notify_rust::Notification;
 #[cfg(target_os = "linux")]
-use rqs_lib::{
-    channel::{ChannelAction, ChannelDirection, ChannelMessage},
-    Visibility,
-};
+use rqs_lib::Visibility;
+#[cfg(target_os = "linux")]
+use crate::dto::{ChannelAction, ChannelDirection, FrontChannelMessage};
 use tauri::AppHandle;
 #[cfg(target_os = "linux")]
 use tauri::Manager;
@@ -24,13 +23,13 @@ pub fn send_request_notification(name: String, id: String, app_handle: &AppHandl
     let _ = app_handle
         .notification()
         .builder()
-        .title("RQuickShare")
+        .title("Open QuickShare")
         .body(&body)
         .show();
 
     #[cfg(target_os = "linux")]
     match Notification::new()
-        .summary("RQuickShare")
+        .summary("Open QuickShare")
         .body(&body)
         .action("accept", "Accept")
         .action("reject", "Reject")
@@ -44,7 +43,7 @@ pub fn send_request_notification(name: String, id: String, app_handle: &AppHandl
                 n.wait_for_action(|action| match action {
                     "accept" => {
                         let _ = cmds::send_to_rs(
-                            ChannelMessage {
+                            FrontChannelMessage {
                                 id,
                                 direction: ChannelDirection::FrontToLib,
                                 action: Some(ChannelAction::AcceptTransfer),
@@ -55,7 +54,7 @@ pub fn send_request_notification(name: String, id: String, app_handle: &AppHandl
                     }
                     "reject" => {
                         let _ = cmds::send_to_rs(
-                            ChannelMessage {
+                            FrontChannelMessage {
                                 id,
                                 direction: ChannelDirection::FrontToLib,
                                 action: Some(ChannelAction::RejectTransfer),
@@ -81,13 +80,13 @@ pub fn send_temporarily_notification(app_handle: &AppHandle) {
     let _ = app_handle
         .notification()
         .builder()
-        .title("RQuickShare")
+        .title("Open QuickShare")
         .body(&body)
         .show();
 
     #[cfg(target_os = "linux")]
     match Notification::new()
-        .summary("RQuickShare")
+        .summary("Open QuickShare")
         .body(&body)
         .action("visible", "Be visible (1m)")
         .action("ignore", "Ignore")

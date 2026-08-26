@@ -12,6 +12,10 @@
 > The full git history (and therefore authorship) of both is preserved in this repository.
 > Licensed GPL‑3, like the projects it builds on.
 
+<div align="center">
+  <img src=".github/screenshot.png" alt="Open QuickShare — Ready to receive" width="720">
+</div>
+
 Why "complete"
 --------------------------
 
@@ -112,28 +116,46 @@ Limitations
 Installation
 --------------------------
 
-Right now: build from source (the upstream releases below predate the complete stack and are
-Wi‑Fi‑LAN only).
+Download the latest **deb**, **rpm**, or **AppImage** from the
+[Releases](https://github.com/ignotusbucius/open-quickshare/releases) page.
+
+```bash
+# Debian / Ubuntu
+sudo dpkg -i open-quickshare_*_amd64.deb
+# Fedora / RHEL
+sudo rpm -i open-quickshare-*.x86_64.rpm
+# AppImage (no install)
+chmod +x open-quickshare_*.AppImage && ./open-quickshare_*.AppImage
+```
+
+Requires the GTK/WebKit runtime (`libwebkit2gtk-4.1`, `libayatana-appindicator3`); the
+packages pull these in, or install them from your distro if the AppImage complains.
+
+To send large files with no shared network, allow the hosted‑hotspot port once (see the
+firewalld note under Requirements).
+
+<details>
+<summary>Build from source</summary>
 
 ```bash
 git clone https://github.com/ignotusbucius/open-quickshare
-cd open-quickshare/core_lib
-cargo build --release
+cd open-quickshare/app/main
+pnpm install
+pnpm build          # produces deb / rpm / AppImage under src-tauri/target/release/bundle/
 ```
 
-The library (`core_lib`, crate `rqs_lib`) is the product — it implements the entire protocol
-stack described above.
+The library that implements the whole protocol stack is `core_lib` (crate `rqs_lib`);
+`cargo build --release` inside it builds just the library.
+</details>
 
-### Frontend status
+### Frontends
 
-- **Verified frontend**: the [Packet](https://github.com/nozwock/packet) GTK app, integrated
-  via a Cargo `[patch]` pointing at this `core_lib`. All capabilities in the tables above
-  were verified end‑to‑end through it (a small Packet patch adding BLE recipients is pending
-  as a PR).
-- **Bundled Tauri app (`app/`)**: inherited from upstream rquickshare, and **currently does
-  not build against this branch** — the base `ble-receiver` branch restructured the
-  library's channel API and the Tauri layer was never ported (this predates the
-  complete‑stack work). Porting it is a welcome contribution.
+Two frontends drive the same `rqs_lib`, so both get every capability above:
+
+- **Open QuickShare** — the desktop app in this repository (`app/main`, Tauri + Vue), what the
+  releases ship and the screenshot shows.
+- **[Packet](https://github.com/nozwock/packet)** — a GTK app that integrates `rqs_lib` via a
+  Cargo `[patch]`; a small patch adding BLE recipients is pending as a PR there.
 
 <details>
 <summary>Upstream rquickshare releases (Wi‑Fi LAN only)</summary>

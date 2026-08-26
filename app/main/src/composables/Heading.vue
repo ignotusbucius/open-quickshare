@@ -18,9 +18,15 @@ const emit = defineEmits(['openSettings']);
 
 <template>
 	<div class="flex flex-row justify-between items-center px-6 py-4">
-		<!-- Header, Pc name left and options right -->
+		<!-- Header: app brand + device name left, options right -->
 		<div>
-			<h4 class="text-md">
+			<div class="flex items-center gap-2">
+				<span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500" />
+				<h1 class="text-sm font-semibold uppercase tracking-wider text-green-700">
+					Open QuickShare
+				</h1>
+			</div>
+			<h4 class="text-md mt-2">
 				Device name
 			</h4>
 			<h2 class="text-2xl font-medium">
@@ -31,7 +37,7 @@ const emit = defineEmits(['openSettings']);
 			<div
 				class="flex items-center gap-2 text-sm transition duration-150 ease-in-out"
 				:class="{'btn active:scale-95': vm.new_version}"
-				@click="vm.new_version && openUrl('https://github.com/Martichou/rquickshare/releases/latest')">
+				@click="vm.new_version && openUrl('https://github.com/ignotusbucius/open-quickshare/releases/latest')">
 				<span v-if="vm.new_version">Update available</span>
 				<p>
 					v{{ vm.version }}

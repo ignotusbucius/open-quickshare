@@ -1,242 +1,182 @@
 <div align="center">
-  <h1>rquickshare</h1>
+  <h1>open-quickshare</h1>
 
   <p>
-    <strong>NearbyShare/QuickShare for Linux and MacOS</strong>
-  </p>
-  <p>
-
-[![CI](https://github.com/Martichou/rquickshare/actions/workflows/build.yml/badge.svg)](https://github.com/Martichou/rquickshare/actions)
-[![CI](https://github.com/Martichou/rquickshare/actions/workflows/lint.yml/badge.svg)](https://github.com/Martichou/rquickshare/actions)
-
+    <strong>Complete Quick Share for Linux — send & receive over Bluetooth LE, Wi‑Fi LAN and Wi‑Fi Direct. No shared network required.</strong>
   </p>
 </div>
 
-> ⚠️ **About this fork.** A fork of [rquickshare](https://github.com/Martichou/rquickshare)
-> that makes a Linux device work as a **Bluetooth** Quick Share receiver — not just Wi‑Fi.
-> Built on [martinalderson](https://github.com/martinalderson/rquickshare)'s `ble-receiver`
-> branch (the initial connect‑over‑BLE‑then‑upgrade‑to‑Wi‑Fi receiver), it adds:
->
-> - **LE L2CAP fast‑connect** — skips the slow per‑connection GATT database walk that made BLE connects take ~10 s.
-> - **Spec‑accurate two‑tier advertising** — a legacy‑sized advertisement header plus the full advertisement over GATT, so modern phones (e.g. Pixel) discover the device reliably; the bloom filter is validated against Google's own implementation.
-> - **Reliability fixes** — advertising lifecycle, radio arbitration between scanning/advertising/connections, and a robust Wi‑Fi bandwidth upgrade with BLE fallback and retry.
->
-> Net result: a phone can discover and send to this Linux device over Bluetooth
-> without both first being on the same Wi‑Fi, and it connects noticeably faster.
-> Everything else is upstream rquickshare.
+> Also known as **rquickshare-complete** — a complete implementation of the Quick Share
+> protocol, based on [rquickshare](https://github.com/Martichou/rquickshare) by Martichou
+> and the `ble-receiver` work of [martinalderson](https://github.com/martinalderson/rquickshare).
+> The full git history (and therefore authorship) of both is preserved in this repository.
+> Licensed GPL‑3, like the projects it builds on.
 
 ![demo image](.github/demo.png)
 
-Installation
+Why "complete"
 --------------------------
 
-You simply have to download the latest release.
+Quick Share (Google's AirDrop equivalent) doesn't run over a single transport. Google's own
+clients negotiate across a *stack* of mediums: discovery and handshake over **Bluetooth LE**,
+transfers over **L2CAP**, an automatic upgrade to **Wi‑Fi LAN** when both devices share a
+network — and when they don't, one device **hosts a Wi‑Fi Direct group / hotspot** that the
+other joins, so large files move at Wi‑Fi speed with no router and no internet anywhere in
+sight.
 
-**Important notes:**
-- The minimum GLIBC version supported is included in the pkg name.
-  - You can check yours with `ldd --version`.
-- RQuickShare is distributed with two version (main & legacy):
-  - Legacy is for compatibility with older Ubuntu versions.
-  - Main is for future support of newer versions of Ubuntu.
+Every other open implementation supports exactly one rung of that ladder: Wi‑Fi LAN via mDNS,
+meaning both devices must already be on the same network. This project implements the entire
+ladder, in **both directions**, matching the behavior of Google's own clients:
 
-#### macOS
-
-Simply install the .dmg.
-
-Note that you may have to first allow the app to install under `Settings > Privacy & Security > Security` (you should see a dialog asking for permission)
-
-#### Linux
-
-##### Install dependencies
-
-RQuickShare requires one of the following libraries to be installed:
-
-- `libayatana-appindicator`
-- `libappindicator3`
-
-The files should (in theory) install those dependencies by themselves, but if this is not the case you may have to install those manually.
-
-##### Install rquickshare
-```bash
-sudo dpkg -i r-quick-share_${VERSION}.deb
+```
+Same network?      ──yes→  transfer over Wi‑Fi LAN (fast, as always)
+      │no
+      └→  connect over BLE, handshake + PIN over BLE, then:
+            ├─ peer offers Wi‑Fi LAN         → take it (it knew better)
+            ├─ no shared network             → one side hosts a Wi‑Fi Direct
+            │                                  group / hotspot, the other joins;
+            │                                  transfer at Wi‑Fi speed
+            └─ Wi‑Fi radio unavailable       → small payloads over BLE;
+                                               large ones fail fast with guidance
 ```
 
-#### Debian
-```bash
-sudo dpkg -i r-quick-share_${VERSION}.deb
-```
+Failures at any rung flip to the next automatically (with retries); pure BLE is the floor, so
+a transfer degrades rather than dies. Mid‑transfer channel switches are lossless: the prior
+channel is fully drained (`LAST_WRITE` / `SAFE_TO_CLOSE` in both directions) before the swap.
 
-#### RPM
-```bash
-sudo rpm -i r-quick-share-${VERSION}.rpm
-```
+How it differs from every other implementation
+--------------------------
 
-#### DNF (preferred over RPM)
-```bash
-sudo dnf install r-quick-share-${VERSION}.rpm
-```
+| Capability | [rquickshare](https://github.com/Martichou/rquickshare) | [NearDrop](https://github.com/grishka/NearDrop)¹ | [pyquickshare](https://github.com/teaishealthy/pyquickshare) | **open‑quickshare** |
+|---|:-:|:-:|:-:|:-:|
+| Receive over Wi‑Fi LAN (mDNS) | ✅ | ✅ | ✅ | ✅ |
+| Send over Wi‑Fi LAN (mDNS) | ✅ | ❌ | ✅ | ✅ |
+| Receive over Bluetooth LE (no shared network) | ❌ | ❌ | ❌ | ✅ |
+| **Send over Bluetooth LE** | ❌ | ❌ | ❌ | ✅ |
+| Automatic BLE → Wi‑Fi LAN upgrade | ❌ | ❌ | ❌ | ✅ |
+| Send with no shared network (join the phone's Wi‑Fi Direct group) | ❌ | ❌ | ❌ | ✅ |
+| Receive with no shared network (host a hotspot for the sender) | ❌ | ❌ | ❌ | ✅ |
+| Lossless mid‑transfer channel switching | ❌ | ❌ | ❌ | ✅ |
 
-#### AppImage (no root required)
+¹ NearDrop is a macOS receiver.
 
-AppImage is a little different. There's no installation needed, you simply have to give it the executable permission (+x on a chmod) to run it.
+Compared to Google's official Quick Share
+--------------------------
 
-```bash
-chmod +x r-quick-share_${VERSION}.AppImage
-```
+| Capability | Official (Windows / Android) | **open‑quickshare** |
+|---|:-:|:-:|
+| Runs on Linux | ❌ *(no official client exists)* | ✅ |
+| Same‑network transfers (fast) | ✅ | ✅ |
+| BLE discovery, handshake and PIN verification | ✅ | ✅ |
+| Large files with **no shared network** (Wi‑Fi Direct / hotspot) | ✅ | ✅ |
+| Small transfers over pure Bluetooth | ✅ | ✅ |
+| Automatic network setup and teardown | ✅ | ✅ |
+| "Contacts" / "Your devices" visibility | ✅ | ❌ *(bound to Google accounts; not possible for third parties — "Everyone" mode only)* |
+| Auto‑enabling the phone's Wi‑Fi radio | ✅ *(the OS does it)* | ❌ *(the phone's radio must already be on; see Limitations)* |
 
-You can then either double click on it, or run it from the cmd line:
+The protocol details were reverse‑engineered against live captures and validated against
+[google/nearby](https://github.com/google/nearby) (bloom filters, advertisement layouts,
+bandwidth‑upgrade frames — including the dynamic role negotiation that Quick Share for
+Windows uses).
 
-```bash
-./r-quick-share_${VERSION}.AppImage
-```
+Requirements
+--------------------------
 
-#### Snap
-
-The snap is not yet on the store, but you can install it with the following (you may need sudo):
-
-```bash
-snap install --dangerous r-quick-share_${VERSION}.snap
-```
-
----
-
-<details>
-<summary>Unofficial Installation Methods</summary>
-
-#### AUR (Arch)
-
-For Arch Linux, you can install it from the AUR by using an AUR helper like yay:
-
-```bash
-yay -S r-quick-share
-```
-
-### Nix
-
-Available here: [NixOS](https://search.nixos.org/packages?channel=24.05&show=rquickshare&from=0&size=50&sort=relevance&type=packages&query=rquickshare)
-
-A nix-shell will temporarily modify your $PATH environment variable. This can be used to try a piece of software before deciding to permanently install it.
-
-```bash
-$ nix-shell -p rquickshare
-```
-</details>
-
----
+- Linux with **BlueZ 5.x** (Bluetooth LE, L2CAP CoC) — the new capabilities are Linux‑only;
+  macOS remains as upstream (Wi‑Fi LAN).
+- **NetworkManager** — used to host/join Wi‑Fi Direct groups and hotspots for the
+  no‑shared‑network paths (`nmcli`).
+- If **firewalld** is active, receiving large files with no shared network needs one
+  permanent rule so the sender can reach the hosted hotspot:
+  `sudo firewall-cmd --zone=nm-shared --add-port=61812/tcp --permanent && sudo firewall-cmd --reload`
+  (Quick Share for Windows registers the equivalent firewall exception in its installer.)
 
 Limitations
 --------------------------
 
-- **Receiving no longer requires the same Wi-Fi** (Linux, experimental). With the
-  BLE receiver a phone can discover and connect to this device over Bluetooth LE
-  without both first being on the same network; the transfer then upgrades to
-  Wi-Fi LAN for speed, and falls back to (slower) BLE when no shared network is
-  available.
-- **Sending still uses Wi-Fi LAN.** Discovering a device to send *to* is done over
-  mDNS, so the target must be reachable on the same network.
+- **Tested only against Pixel phones** (Pixel 9 Pro, GmsCore as of Aug 2026). Other Android
+  devices speak the same protocol and should work, but are unverified. Samsung devices ship a
+  modified Quick Share and may behave differently.
+- **The phone's Wi‑Fi radio must be enabled** for large no‑network transfers (it does *not*
+  need to be connected to anything). With the radio fully off, Android refuses all Wi‑Fi
+  upgrades and only small payloads (≈1 MB) are accepted over pure BLE — the same wall the
+  official clients hit, which they dodge by auto‑enabling the radio from inside the OS.
+- **"Everyone" visibility only.** Contacts / Your‑devices modes require Google‑account
+  certificate exchange that a third‑party client cannot perform.
+- **Hosting a hotspot can briefly take the PC's Wi‑Fi off its network** (single‑channel
+  radios); NetworkManager restores the previous connection when the transfer ends. Wired
+  machines are unaffected throughout.
+- Environment toggles: `PACKET_BLE_SEND=off` disables BLE sending, `PACKET_PREFER_BLE=on`
+  forces BLE‑only discovery (testing), `PACKET_BLE_L2CAP=off` disables the L2CAP listener.
+- Diagnostic tools live in `core_lib/examples/` (`tx_probe` — scan/decode/dial a receiver,
+  `tx_send` — full command‑line send).
+
+Installation
+--------------------------
+
+Right now: build from source (the upstream releases below predate the complete stack and are
+Wi‑Fi‑LAN only).
+
+```bash
+git clone https://github.com/ignotusbucius/open-quickshare
+cd open-quickshare/core_lib
+cargo build --release
+```
+
+The library (`rqs_lib`) is what implements everything; it powers the upstream frontend in
+this repository and integrates with the [Packet](https://github.com/nozwock/packet) GTK app
+via a Cargo `[patch]` (a small Packet patch adding BLE recipients is pending as a PR).
+
+<details>
+<summary>Upstream rquickshare releases (Wi‑Fi LAN only)</summary>
+
+The original installation channels for the upstream app: `.deb`, `.rpm`, AppImage, Snap from
+[rquickshare releases](https://github.com/Martichou/rquickshare/releases), AUR
+(`r-quick-share`), and [NixOS](https://search.nixos.org/packages?query=rquickshare). These do
+not include the BLE / Wi‑Fi Direct stack.
+</details>
 
 FAQ
 --------------------------
 
 ### My Android device doesn't see my laptop
 
-Make sure both your devices are on the same WiFi network. mDNS communication should be allowed on the network; this may not be the case if you're on a public network (coffee shops, airports, etc.).
+With this implementation it should appear even with no shared network — make sure Bluetooth
+is enabled on both sides. On a shared network, mDNS must be allowed (public networks often
+block it); the BLE path doesn't care.
 
-### My laptop doesn't see my Android device
+### My laptop doesn't see my Android device (when sending)
 
-For some reason, Android doesn't broadcast its mDNS service all the time, even when in "Everyone" mode.
+Put the phone on its Quick Share receive screen ("Everyone" visibility). The phone is then
+discovered over BLE even without mDNS. Android also sometimes hides its mDNS service; this
+project's Bluetooth advertisement nudges it awake — with Bluetooth off on the laptop you're
+limited to mDNS and the same-network requirement.
 
-The first solution (implemented in RQuickShare for Linux) is to broadcast a bluetooth advertisement so that Android will then make its mDNS available.
-Of course, for this you need to have bluetooth on your laptop/desktop. If you don't have that, continue reading.
+### A large transfer says "Too large for Bluetooth — turn on Wi‑Fi"
 
-As a workaround, you can use the "[Files](https://play.google.com/store/apps/details?id=com.google.android.apps.nbu.files)" app on your Android device and go to the "Nearby Share" tab (if it's not present, continue reading).
-
-A second workaround is to download a Shortcut maker (see [here](https://xdaforums.com/t/how-to-manually-create-a-homescreen-shortcut-to-a-known-unique-android-activity.4336833)) to create a shortcut to the particular intent:
-
-- Method A:
-	- Activity: `com.google.android.gms.nearby.sharing.ReceiveSurfaceActivity`
-
-- Method B:
-	- Action: `com.google.android.gms.RECEIVE_NEARBY`
-	- Mime type: `*/*`
-
-_Note: Samsung did something shady with Quick Share, so the above workaround may not work. Unfortunately, there's no alternative at the moment. Sorry._
-
-### When sharing a file, my phone appears and disappears "randomly"
-
-TLDR: This is normal if you're just using bluetooth (as explained in the previous point).
-
-Android will see that your laptop/desktop is trying to share a file and will reveal itself. But for some reason, Android will de-register its service from time to time and will only then be revealed again once it detects the bluetooth message again.
-
-### Once I close the app, it won't reopen
-
-Make sure the app is really closed by running:
-
-```bash
-ps aux | grep r-quick-share
-```
-
-If you see that the process is still running, it's because the app is not closed. This may be an intended behavior: when closing the window, the app won't stop and instead is still running and accessible via the system tray icon. However, if your distribution doesn't support/hasn't enabled this, it may be an issue for you.
-
-If you want to **really** close the app when clicking on the close button, you can change that inside the app by clicking on the three dots and then "Stop app on close".
+The phone's Wi‑Fi radio is off, so no Wi‑Fi upgrade is possible (see Limitations). Enable
+Wi‑Fi on the phone — it does *not* need to join any network — and retry.
 
 ### My firewall is blocking the connection
 
-In this case, you may want to configure a static port to allow it in your firewall. You can do so by modifying the config file as follow:
-
-```bash
-# linux
-vim ./.local/share/dev.mandre.rquickshare/.settings.json
-
-# mac
-vim Library/Application\ Support/dev.mandre.rquickshare/.settings.json
-
-# to be sure
-find $HOME -name ".settings.json"
-```
-
-> [!WARNING]
->
-> The json must stay valid after your modification; for example, if "port" is the last item of the JSON it must not have a comma after it, otherwise the config will be reset.
-
-```json
-{
-	...existing_config...,
-	"port": 12345
-}
-```
-
-By default the port is random (the OS will decide).
-
-### The app opens but I just get a blank window or cannot run it.
-
-This happens for some users running Linux + NVIDIA cards.
-
-The workaround is to start RQuickShare with an env variable defined as follows:
-
-```bash
-env WEBKIT_DISABLE_COMPOSITING_MODE=1 rquickshare
-```
-
-Alternatively, you may try the `legacy` variant.
-
-WIP Notes
---------------------------
-
-`rquickshare` is still in development (WIP) and currently only supports Linux even though it should be compatible with macOS too. Keep in mind that the design may change between versions, so flexibility is key.
-
-Got feedback or suggestions? We'd love to hear them! Feel free to open an issue and share your thoughts.
+For same‑network transfers you can pin the app's port in
+`~/.local/share/dev.mandre.rquickshare/.settings.json` (`"port": 12345`) and allow it. For
+hosted‑hotspot receiving, see the firewalld rule under Requirements.
 
 Credits
 --------------------------
 
-This project wouldn't exist without those amazing open-source project:
+This project exists because of:
 
-- https://github.com/grishka/NearDrop
-- https://github.com/vicr123/QNearbyShare
-
+- [Martichou/rquickshare](https://github.com/Martichou/rquickshare) — the base implementation (Wi‑Fi LAN, Ukey2, the whole foundation)
+- [martinalderson/rquickshare `ble-receiver`](https://github.com/martinalderson/rquickshare) — the first connect‑over‑BLE receiver
+- [nozwock/packet](https://github.com/nozwock/packet) — the GTK app this stack is exercised in
+- [google/nearby](https://github.com/google/nearby) — protocol ground truth
+- [grishka/NearDrop](https://github.com/grishka/NearDrop) and [vicr123/QNearbyShare](https://github.com/vicr123/QNearbyShare) — upstream's original protocol references
 
 Contributing
 --------------------------
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+Pull requests are welcome. For major changes, please open an issue first to discuss what you
+would like to change. Reports from non‑Pixel devices are especially valuable (see
+Limitations).

@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use bytes::Bytes;
-use get_if_addrs::get_if_addrs;
+use get_if_addrs::{IfAddr, get_if_addrs};
 use hkdf::Hkdf;
 use num_bigint::{BigUint, ToBigInt};
 use p256::elliptic_curve::rand_core::OsRng;
@@ -224,6 +224,29 @@ pub fn local_ipv4() -> Option<[u8; 4]> {
         }
     }
     fallback
+}
+
+/// Whether `remote` falls inside the subnet of any of our non-loopback IPv4
+/// interfaces — i.e. whether a peer at that address is reachable over the
+/// local network (used to pick the bandwidth-upgrade path).
+pub fn same_subnet(remote: [u8; 4]) -> bool {
+    let Ok(addrs) = get_if_addrs() else {
+        return false;
+    };
+    let r = u32::from(Ipv4Addr::from(remote));
+    for ia in addrs {
+        if let IfAddr::V4(v4) = &ia.addr {
+            if v4.ip.is_loopback() || v4.ip.is_link_local() {
+                continue;
+            }
+            let ip = u32::from(v4.ip);
+            let mask = u32::from(v4.netmask);
+            if mask != 0 && (ip & mask) == (r & mask) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 pub fn is_not_self_ip(ip_address: &Ipv4Addr) -> bool {

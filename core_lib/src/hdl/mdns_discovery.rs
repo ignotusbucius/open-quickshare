@@ -17,6 +17,12 @@ pub struct EndpointInfo {
     pub port: Option<String>,
     pub rtype: Option<DeviceType>,
     pub present: Option<bool>,
+    /// Set for a recipient discovered over BLE (a phone on its receive screen).
+    /// `ble_addr` is the peer's current LE address; `ble_psm` its L2CAP PSM.
+    /// Both rotate, so the send path re-scans by name before dialing — these are
+    /// a hint and the marker that this endpoint is reachable over BLE.
+    pub ble_addr: Option<String>,
+    pub ble_psm: Option<u16>,
 }
 
 pub struct MDnsDiscovery {
@@ -91,6 +97,8 @@ impl MDnsDiscovery {
                                             port: Some(port.to_string()),
                                             rtype: Some(dt),
                                             present: Some(true),
+                                            ble_addr: None,
+                                            ble_psm: None,
                                         };
                                         info!("ServiceResolved: Resolved a new service: {:?}", ei);
                                         cache.insert(fullname.clone(), ei.clone());

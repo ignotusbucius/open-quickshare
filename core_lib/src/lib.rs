@@ -303,10 +303,36 @@ impl RQS {
                     error!("Couldn't start BleAdvertiser: {}", e);
                 }
             });
+
+            // Discover phones on their Quick Share receive screen over BLE, so
+            // they can be sent to without both devices being on the same Wi-Fi.
+            // `PACKET_BLE_SEND=off` disables it.
+            if std::env::var("PACKET_BLE_SEND")
+                .map(|v| v.eq_ignore_ascii_case("off"))
+                .unwrap_or(false)
+            {
+                info!("BLE recipient discovery: disabled by PACKET_BLE_SEND=off");
+            } else {
+                let ble_sender = sender.clone();
+                let ctk_bled = ctk.clone();
+                tracker.spawn(async move {
+                    crate::hdl::ble_discovery(ble_sender, ctk_bled).await;
+                });
+            }
         }
 
-        let discovery = MDnsDiscovery::new(sender)?;
-        tracker.spawn(async move { discovery.run(ctk.clone()).await });
+        // `PACKET_PREFER_BLE=on` disables mDNS discovery so recipients are found
+        // over BLE only — the send then starts on L2CAP and (with the phone on
+        // Wi-Fi) exercises the BLE→Wi-Fi bandwidth upgrade. Test/demo toggle.
+        if std::env::var("PACKET_PREFER_BLE")
+            .map(|v| v.eq_ignore_ascii_case("on") || v == "1")
+            .unwrap_or(false)
+        {
+            info!("MDnsDiscovery: disabled by PACKET_PREFER_BLE=on (BLE-only recipient discovery)");
+        } else {
+            let discovery = MDnsDiscovery::new(sender)?;
+            tracker.spawn(async move { discovery.run(ctk.clone()).await });
+        }
 
         Ok(())
     }

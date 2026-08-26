@@ -14,21 +14,21 @@ use crate::hdl::{BleScanSuppressor, InboundRequest, cycle_advert_when_peer_gone}
 const INNER_NAME: &str = "L2capServer";
 
 // SHA-256("NearbySharing")[..3], same service hash as everywhere else.
-const SVC_HASH: [u8; 3] = [0xfc, 0x9f, 0x5e];
+pub(crate) const SVC_HASH: [u8; 3] = [0xfc, 0x9f, 0x5e];
 
 // BleL2capPacket commands (google/nearby ble_l2cap_packet.h). Requests 1 and
 // 21 are followed by [u16 BE length][payload]; the rest are a bare command
 // byte. Spoken by the C++ platforms; GmsCore skips this handshake entirely.
 const CMD_REQUEST_ADVERTISEMENT: u8 = 1;
 const CMD_REQUEST_ADVERTISEMENT_FINISH: u8 = 2;
-const CMD_REQUEST_DATA_CONNECTION: u8 = 3;
+pub(crate) const CMD_REQUEST_DATA_CONNECTION: u8 = 3;
 const CMD_RESPONSE_ADVERTISEMENT: u8 = 21;
 const CMD_RESPONSE_SERVICE_ID_NOT_FOUND: u8 = 22;
-const CMD_RESPONSE_DATA_CONNECTION_READY: u8 = 23;
+pub(crate) const CMD_RESPONSE_DATA_CONNECTION_READY: u8 = 23;
 
 // BLE-socket control frame types (same as the GATT weave socket's).
-const SOCKET_CTRL_INTRODUCTION: u8 = 1;
-const SOCKET_CTRL_DISCONNECTION: u8 = 2;
+pub(crate) const SOCKET_CTRL_INTRODUCTION: u8 = 1;
+pub(crate) const SOCKET_CTRL_DISCONNECTION: u8 = 2;
 const SOCKET_CTRL_PACKET_ACK: u8 = 3;
 
 /// Builds a `[u32 len][00 00 00][SocketControlFrame]` acknowledgement for
@@ -44,7 +44,7 @@ const SOCKET_CTRL_PACKET_ACK: u8 = 3;
 /// it -- a pause visible at the head of every session until now.
 /// `08 01` type=INTRODUCTION, `12 len` introduction submessage,
 /// `0a 03 fc9f5e` service id hash, `10 02` socket version 2.
-fn build_intro_frame() -> Vec<u8> {
+pub(crate) fn build_intro_frame() -> Vec<u8> {
     let mut msg = vec![0u8, 0, 0, 0x08, SOCKET_CTRL_INTRODUCTION, 0x12, 0x07, 0x0a, 0x03];
     msg.extend_from_slice(&SVC_HASH);
     msg.extend_from_slice(&[0x10, 0x02]);
@@ -54,7 +54,7 @@ fn build_intro_frame() -> Vec<u8> {
     frame
 }
 
-fn build_ack_frame(acked: usize) -> Vec<u8> {
+pub(crate) fn build_ack_frame(acked: usize) -> Vec<u8> {
     let mut varint = Vec::new();
     let mut v = acked as u64;
     loop {
@@ -289,7 +289,7 @@ async fn serve_ble_socket(
 }
 
 /// Sends one `[u32 BE length][packet]` frame.
-async fn send_frame(stream: &mut Stream, packet: &[u8]) -> Result<(), anyhow::Error> {
+pub(crate) async fn send_frame(stream: &mut Stream, packet: &[u8]) -> Result<(), anyhow::Error> {
     let mut framed = Vec::with_capacity(4 + packet.len());
     framed.extend_from_slice(&(packet.len() as u32).to_be_bytes());
     framed.extend_from_slice(packet);
@@ -388,7 +388,7 @@ async fn serve_weave_messages(
 }
 
 /// Reads one `[u32 BE length][payload]` frame; `Ok(None)` on clean EOF.
-async fn read_frame(
+pub(crate) async fn read_frame(
     stream: &mut Stream,
     leftover: &mut Vec<u8>,
 ) -> Result<Option<Vec<u8>>, anyhow::Error> {

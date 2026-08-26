@@ -18,6 +18,17 @@ pub enum MigratableStream {
     Tcp(TcpStream),
 }
 
+impl crate::hdl::WifiUpgradable for MigratableStream {
+    fn is_low_bandwidth(&self) -> bool {
+        // TCP (Wi-Fi) is fast; the BLE variants are slow.
+        !matches!(self, MigratableStream::Tcp(_))
+    }
+    fn upgrade_to_tcp(&mut self, tcp: TcpStream) -> bool {
+        *self = MigratableStream::Tcp(tcp);
+        true
+    }
+}
+
 impl AsyncRead for MigratableStream {
     fn poll_read(
         self: Pin<&mut Self>,

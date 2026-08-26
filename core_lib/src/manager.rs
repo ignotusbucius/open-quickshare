@@ -16,6 +16,11 @@ pub struct SendInfo {
     pub name: String,
     pub addr: String,
     pub ob: OutboundPayload,
+    /// When set, send over BLE instead of Wi-Fi/TCP: the recipient is a phone
+    /// discovered over BLE. The send path re-scans for it by `name` (its LE
+    /// address and PSM rotate) and dials the fresh target. `addr`/`id` may be a
+    /// placeholder in this case. Ignored on non-Linux / non-experimental builds.
+    pub ble: bool,
 }
 
 pub struct TcpServer {
@@ -121,6 +126,11 @@ impl TcpServer {
 
     /// To be called inside a separate task if we want to handle concurrency
     pub async fn connect(&self, ctk: CancellationToken, si: SendInfo) -> Result<(), anyhow::Error> {
+        #[cfg(all(feature = "experimental", target_os = "linux"))]
+        if si.ble {
+            return self.connect_ble(ctk, si).await;
+        }
+
         debug!("{INNER_NAME}: Connecting to: {}", si.addr);
         let socket = TcpStream::connect(si.addr.clone()).await?;
 
@@ -141,6 +151,67 @@ impl TcpServer {
         // Send UKEY init
         or.send_ukey2_client_init().await?;
 
+        self.drive_outbound(ctk, or, si.addr).await;
+        Ok(())
+    }
+
+    /// Send over BLE to a phone discovered on its receive screen. Re-scans for
+    /// it by name (its LE address and PSM rotate), dials the fresh target, then
+    /// drives the same outbound handshake over the L2CAP-backed stream.
+    #[cfg(all(feature = "experimental", target_os = "linux"))]
+    async fn connect_ble(&self, ctk: CancellationToken, si: SendInfo) -> Result<(), anyhow::Error> {
+        use crate::hdl::{dial, scan_once};
+        use std::time::Duration;
+
+        debug!("{INNER_NAME}: BLE send to {:?}", si.name);
+        let session = bluer::Session::new().await?;
+        let adapter = session.default_adapter().await?;
+        adapter.set_powered(true).await?;
+
+        // Airtime for the scan/connect; also stops our own receiver scanner.
+        let _suppressor = crate::hdl::BleScanSuppressor::new();
+
+        let targets = scan_once(&adapter, Duration::from_secs(20), Some(&si.name)).await?;
+        let target = targets
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("{} is no longer advertising over BLE", si.name))?;
+
+        let stream = dial(&adapter, &target).await?;
+
+        let mut or = OutboundRequest::new(
+            self.endpoint_id,
+            stream,
+            si.id,
+            self.sender.clone(),
+            si.ob,
+            target.rdi,
+        );
+        // Advertise WIFI_LAN (5) + WIFI_DIRECT (8) + WIFI_HOTSPOT (3) +
+        // BLE_L2CAP (10). The phone (advertiser) picks the best and offers it:
+        // same LAN → WIFI_LAN (we connect to its ip:port); no shared LAN →
+        // WIFI_DIRECT (it hosts its own group, we join it). Either way the
+        // payload leaves BLE for Wi-Fi speed.
+        or.set_mediums(vec![5, 8, 3, 10]);
+
+        or.send_connection_request().await?;
+        or.send_ukey2_client_init().await?;
+
+        self.drive_outbound(ctk, or, si.name).await;
+        Ok(())
+    }
+
+    /// Drives an outbound transfer to completion, reporting a Disconnected state
+    /// on an unexpected error. Generic over the transport (`TcpStream` for
+    /// Wi-Fi, the BLE-backed stream for L2CAP).
+    async fn drive_outbound<S>(
+        &self,
+        ctk: CancellationToken,
+        mut or: OutboundRequest<S>,
+        report_id: String,
+    ) where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + crate::hdl::WifiUpgradable,
+    {
         loop {
             tokio::select! {
                 _ = ctk.cancelled() => {
@@ -158,7 +229,7 @@ impl TcpServer {
 
                                 if or.state.state != TransferState::Finished && or.state.state != TransferState::Cancelled {
                                     let _ = self.sender.clone().send(ChannelMessage {
-                                        id: si.addr,
+                                        id: report_id.clone(),
                                         msg: channel::Message::Client(MessageClient {
                                             kind: TransferKind::Outbound,
                                             state: Some(TransferState::Disconnected),
@@ -174,7 +245,5 @@ impl TcpServer {
                 }
             }
         }
-
-        Ok(())
     }
 }

@@ -27,6 +27,14 @@ pub use l2cap::*;
 mod migratable;
 #[cfg(all(feature = "experimental", target_os = "linux"))]
 pub use migratable::*;
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+mod ble_client;
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+pub use ble_client::*;
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+mod hotspot;
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+pub use hotspot::*;
 mod inbound;
 pub use inbound::*;
 pub mod info;
@@ -89,6 +97,9 @@ pub struct InnerState {
 
     // Used to handle/track ingress transfer
     pub text_payload: Option<TextPayloadInfo>,
+    /// Data chunks received per payload id — answers the sender's
+    /// AUTO_RESUME (payload resume) question after a mid-transfer channel switch.
+    pub payload_chunk_counts: HashMap<i64, i32>,
     // pub text_payload_id: i64,
     // pub text_is_url: bool,
     // pub wifi_ssid: Option<String>,

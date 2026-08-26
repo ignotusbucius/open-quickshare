@@ -111,7 +111,9 @@ pub fn peek_client_introduction(buf: &[u8]) -> Option<String> {
 
 /// Read one length-prefixed `[4-byte len][frame]` message from a stream (plaintext).
 #[cfg(all(feature = "experimental", target_os = "linux"))]
-async fn read_frame_from<R: AsyncRead + Unpin>(stream: &mut R) -> Result<Vec<u8>, anyhow::Error> {
+pub(crate) async fn read_frame_from<R: AsyncRead + Unpin>(
+    stream: &mut R,
+) -> Result<Vec<u8>, anyhow::Error> {
     let mut len_buf = [0u8; 4];
     stream_read_exact(stream, &mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf) as usize;
@@ -154,6 +156,16 @@ pub struct InboundRequest<S = TcpStream> {
     bwu_attempts: u8,
     /// When to re-offer the Wi-Fi upgrade, if scheduled.
     bwu_retry_at: Option<tokio::time::Instant>,
+    /// The sender's advertised LAN address (from its ConnectionRequest's
+    /// medium_metadata); decides the bandwidth-upgrade path.
+    remote_ip: Option<[u8; 4]>,
+    /// Host our own hotspot for the next upgrade attempt (no shared LAN with
+    /// the sender, or the LAN offer already failed once).
+    bwu_try_hotspot: bool,
+    /// Keeps a hotspot we host for the upgrade alive for the length of the
+    /// transfer; torn down (and Wi-Fi restored) on drop.
+    #[cfg(all(feature = "experimental", target_os = "linux"))]
+    hotspot_guard: Option<crate::hdl::HotspotGuard>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
@@ -176,6 +188,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             bwu_pending: false,
             bwu_attempts: 0,
             bwu_retry_at: None,
+            remote_ip: None,
+            bwu_try_hotspot: false,
+            #[cfg(all(feature = "experimental", target_os = "linux"))]
+            hotspot_guard: None,
         }
     }
 
@@ -489,7 +505,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
     }
 
     fn process_connection_request(
-        &self,
+        &mut self,
         frame: &location_nearby_connections::OfflineFrame,
     ) -> Result<RemoteDeviceInfo, anyhow::Error> {
         let v1_frame = frame
@@ -509,6 +525,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             .connection_request
             .as_ref()
             .ok_or_else(|| anyhow!("Missing required fields"))?;
+
+        // The sender's advertised LAN address picks the upgrade path later:
+        // same subnet → offer our LAN socket; different/absent → host a hotspot.
+        self.remote_ip = connection_request
+            .medium_metadata
+            .as_ref()
+            .and_then(|m| m.ip_address.as_ref())
+            .and_then(|b| <[u8; 4]>::try_from(b.as_slice()).ok());
 
         let endpoint_info = connection_request
             .endpoint_info
@@ -785,6 +809,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             .v1
             .as_ref()
             .ok_or_else(|| anyhow!("Missing required fields"))?;
+        debug!(
+            "inbound frame: type={:?} (raw={:?})",
+            v1_frame.r#type(),
+            v1_frame.r#type
+        );
         match v1_frame.r#type() {
             location_nearby_connections::v1_frame::FrameType::PayloadTransfer => {
                 trace!("Received FrameType::PayloadTransfer");
@@ -801,6 +830,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                     .payload_chunk
                     .as_ref()
                     .ok_or_else(|| anyhow!("Missing required fields"))?;
+
+                // Track chunk counts per payload for the AUTO_RESUME answer
+                // after a mid-transfer channel switch.
+                *self
+                    .state
+                    .payload_chunk_counts
+                    .entry(header.id())
+                    .or_insert(0) += 1;
 
                 match header.r#type() {
                     payload_header::PayloadType::Bytes => {
@@ -1043,6 +1080,45 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                     let frame =
                         Self::bwu_frame(EventType::SafeToClosePriorChannel, None, None);
                     let _ = self.encrypt_and_send(&frame).await;
+                }
+            }
+            location_nearby_connections::v1_frame::FrameType::AutoResume => {
+                // The sender resumes a payload after a mid-transfer channel
+                // switch: acknowledge with how many chunks we already hold.
+                use location_nearby_connections::auto_resume_frame::EventType as ResumeEvent;
+                let Some(ar) = v1_frame.auto_resume.as_ref() else {
+                    warn!("AUTO_RESUME frame without body");
+                    return Ok(());
+                };
+                info!(
+                    "AUTO_RESUME from sender: event={:?} payload_id={:?} next_chunk={:?} version={:?}",
+                    ar.event_type(),
+                    ar.pending_payload_id,
+                    ar.next_payload_chunk_index,
+                    ar.version
+                );
+                if ar.event_type() == ResumeEvent::PayloadResumeTransferStart {
+                    let received = ar
+                        .pending_payload_id
+                        .and_then(|id| self.state.payload_chunk_counts.get(&id).copied())
+                        .unwrap_or(0);
+                    let ack = OfflineFrame {
+                        version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+                        v1: Some(location_nearby_connections::V1Frame {
+                            r#type: Some(
+                                location_nearby_connections::v1_frame::FrameType::AutoResume.into(),
+                            ),
+                            auto_resume: Some(location_nearby_connections::AutoResumeFrame {
+                                event_type: Some(ResumeEvent::PayloadResumeTransferAck.into()),
+                                pending_payload_id: ar.pending_payload_id,
+                                next_payload_chunk_index: Some(received),
+                                version: ar.version,
+                            }),
+                            ..Default::default()
+                        }),
+                    };
+                    info!("AUTO_RESUME: acking payload {:?} at chunk {received}", ar.pending_payload_id);
+                    self.encrypt_and_send(&ack).await?;
                 }
             }
             _ => {
@@ -1551,6 +1627,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                 offset: Some(0),
                 flags: Some(0),
                 body: Some(frame_data),
+                ..Default::default()
             }),
             payload_header: Some(payload_header.clone()),
             ..Default::default()
@@ -1577,6 +1654,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                 offset: Some(body_size as i64),
                 flags: Some(1), // lastChunk
                 body: Some(vec![]),
+                ..Default::default()
             }),
             payload_header: Some(payload_header),
             ..Default::default()
@@ -1734,6 +1812,79 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
 
 #[cfg(all(feature = "experimental", target_os = "linux"))]
 impl InboundRequest<crate::hdl::MigratableStream> {
+    /// Fully drain the prior (BLE) channel after the peer has connected on the
+    /// new one. The peer keeps streaming payload over BLE until it sends
+    /// LAST_WRITE_TO_PRIOR_CHANNEL, so the drain must be uncapped: process every
+    /// in-flight frame, answer the peer's LAST_WRITE with SAFE_TO_CLOSE, and
+    /// wait for its SAFE_TO_CLOSE to our own LAST_WRITE. Reading everything
+    /// before the swap is what guarantees no payload bytes are lost — a
+    /// fixed-count drain deadlocks a mid-payload switch (the count is consumed
+    /// by chunks, the peer's LAST_WRITE is never read, and it waits forever).
+    async fn drain_prior_channel(&mut self) -> Result<(), anyhow::Error> {
+        use location_nearby_connections::bandwidth_upgrade_negotiation_frame::EventType;
+
+        self.encrypt_and_send(&Self::bwu_frame(EventType::LastWriteToPriorChannel, None, None))
+            .await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+        let mut peer_last_write = false;
+        let mut peer_safe_to_close = false;
+        while !(peer_last_write && peer_safe_to_close) {
+            let offline = match tokio::time::timeout_at(deadline, self.read_encrypted_offline_frame())
+                .await
+            {
+                Ok(Ok(f)) => f,
+                Ok(Err(e)) => {
+                    debug!("BWU drain: prior channel ended ({e})");
+                    break;
+                }
+                Err(_) => {
+                    warn!("BWU drain: deadline reached; proceeding with the swap");
+                    break;
+                }
+            };
+            match offline.v1.as_ref().map(|v| v.r#type()) {
+                Some(
+                    location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation,
+                ) => {
+                    let event = offline
+                        .v1
+                        .as_ref()
+                        .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref())
+                        .map(|b| b.event_type());
+                    match event {
+                        Some(EventType::LastWriteToPriorChannel) => {
+                            debug!("BWU drain: peer LAST_WRITE → sending SAFE_TO_CLOSE");
+                            peer_last_write = true;
+                            let _ = self
+                                .encrypt_and_send(&Self::bwu_frame(
+                                    EventType::SafeToClosePriorChannel,
+                                    None,
+                                    None,
+                                ))
+                                .await;
+                        }
+                        Some(EventType::SafeToClosePriorChannel) => {
+                            debug!("BWU drain: peer SAFE_TO_CLOSE");
+                            peer_safe_to_close = true;
+                        }
+                        other => debug!("BWU drain: event {other:?}"),
+                    }
+                }
+                Some(location_nearby_connections::v1_frame::FrameType::KeepAlive) => {
+                    // Never write to a channel we already LAST_WRITE'd.
+                }
+                _ => {
+                    // In-flight payload (and any late handshake frames): process
+                    // so nothing is lost across the switch.
+                    if let Err(e) = self.process_offline_frame(offline).await {
+                        debug!("BWU drain: error processing frame: {e}");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Run the Wi-Fi bandwidth upgrade: offer a TCP path over the (encrypted) BLE
     /// channel, accept the phone, exchange the plaintext CLIENT_INTRODUCTION/ACK,
     /// drain the BLE channel, then swap the socket to TCP so the (large) payload
@@ -1744,6 +1895,20 @@ impl InboundRequest<crate::hdl::MigratableStream> {
 
         if matches!(self.socket, crate::hdl::MigratableStream::Tcp(_)) {
             return Ok(());
+        }
+
+        // Pick the upgrade path. Same LAN → offer our LAN ip:port (phone
+        // connects to us over the network). Different or unknown network →
+        // host a hotspot the phone joins. A failed attempt flips the choice
+        // for the retry, so a wrong guess costs one round, never the transfer.
+        if self.bwu_attempts == 0 {
+            self.bwu_try_hotspot = match self.remote_ip {
+                Some(ip) => !crate::utils::same_subnet(ip),
+                None => crate::utils::local_ipv4().is_none(),
+            };
+        }
+        if self.bwu_try_hotspot {
+            return self.do_bwu_hotspot().await;
         }
 
         let listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
@@ -1767,6 +1932,7 @@ impl InboundRequest<crate::hdl::MigratableStream> {
                     }
                     Err(e) => {
                         warn!("BWU: TCP accept failed ({e}); staying on BLE");
+                        self.bwu_try_hotspot = true;
                         self.schedule_bwu_retry();
                         return Ok(());
                     }
@@ -1785,6 +1951,7 @@ impl InboundRequest<crate::hdl::MigratableStream> {
                         .unwrap_or(false);
                     if is_upgrade_failure {
                         warn!("BWU: phone reported UPGRADE_FAILURE; continuing over BLE");
+                        self.bwu_try_hotspot = true;
                         self.schedule_bwu_retry();
                         return Ok(());
                     }
@@ -1796,6 +1963,7 @@ impl InboundRequest<crate::hdl::MigratableStream> {
                 }
                 _ = tokio::time::sleep_until(deadline) => {
                     warn!("BWU: no TCP upgrade within timeout; staying on BLE");
+                    self.bwu_try_hotspot = true;
                     self.schedule_bwu_retry();
                     return Ok(());
                 }
@@ -1809,55 +1977,8 @@ impl InboundRequest<crate::hdl::MigratableStream> {
         }
         send_frame_on(&mut tcp, &Self::bwu_ack_frame().encode_to_vec()).await?;
 
-        // Drain the BLE channel: our LAST_WRITE, then read the peer's control frames
-        // (advancing client_seq) until it's safe to close the prior channel.
-        self.encrypt_and_send(&Self::bwu_frame(EventType::LastWriteToPriorChannel, None, None))
-            .await?;
-        for _ in 0..16 {
-            let offline = match tokio::time::timeout(
-                Duration::from_secs(5),
-                self.read_encrypted_offline_frame(),
-            )
-            .await
-            {
-                Ok(Ok(f)) => f,
-                _ => break,
-            };
-            let frame_type = offline.v1.as_ref().map(|v| v.r#type());
-            if frame_type
-                != Some(location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation)
-            {
-                // The phone keeps sending normal frames (paired-key, etc.) over BLE
-                // until its LAST_WRITE — process them so the sharing handshake
-                // continues correctly after the swap.
-                if let Err(e) = self.process_offline_frame(offline).await {
-                    debug!("BWU drain: error processing non-BWU frame: {e}");
-                }
-                continue;
-            }
-            let event = offline
-                .v1
-                .as_ref()
-                .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref())
-                .map(|b| b.event_type());
-            match event {
-                Some(EventType::LastWriteToPriorChannel) => {
-                    debug!("BWU drain: peer LAST_WRITE → sending SAFE_TO_CLOSE");
-                    let _ = self
-                        .encrypt_and_send(&Self::bwu_frame(
-                            EventType::SafeToClosePriorChannel,
-                            None,
-                            None,
-                        ))
-                        .await;
-                }
-                Some(EventType::SafeToClosePriorChannel) => {
-                    debug!("BWU drain: peer SAFE_TO_CLOSE → done");
-                    break;
-                }
-                other => debug!("BWU drain: event {other:?}"),
-            }
-        }
+        // Drain the BLE channel completely, then swap (see drain_prior_channel).
+        self.drain_prior_channel().await?;
 
         // Tell the phone the prior (BLE) channel is closing so it stops pausing the
         // new channel and resumes immediately (avoids a ~10s phone-side timeout).
@@ -1880,6 +2001,143 @@ impl InboundRequest<crate::hdl::MigratableStream> {
         // Swap to the TCP channel; the payload loop resumes over Wi-Fi.
         self.socket = crate::hdl::MigratableStream::Tcp(tcp);
         info!("BWU: upgraded to Wi-Fi-LAN; payload continues over TCP");
+        // Announce ourselves on the new channel (both sides restart keep-alives
+        // after a channel switch); also un-sticks a sender waiting to see the
+        // receiver's traffic before resuming the payload.
+        let _ = self.send_keepalive(false).await;
+        Ok(())
+    }
+
+    /// Host a hotspot and offer it to the sender (no shared LAN): the phone
+    /// joins our network, connects to the gateway, and the payload continues
+    /// over Wi-Fi. Mirror of the phone-hosted group we join when sending.
+    async fn do_bwu_hotspot(&mut self) -> Result<(), anyhow::Error> {
+        use location_nearby_connections::bandwidth_upgrade_negotiation_frame::EventType;
+        use location_nearby_connections::bandwidth_upgrade_negotiation_frame::UpgradePathInfo;
+        use location_nearby_connections::bandwidth_upgrade_negotiation_frame::upgrade_path_info::{
+            Medium as UpMedium, WifiHotspotCredentials,
+        };
+
+        let guard = match crate::hdl::start_hotspot().await {
+            Ok(g) => g,
+            Err(e) => {
+                warn!("BWU: couldn't host a hotspot ({e}); staying on BLE");
+                // Only fall back to the LAN offer if we actually have a LAN.
+                self.bwu_try_hotspot = crate::utils::local_ipv4().is_none();
+                self.schedule_bwu_retry();
+                return Ok(());
+            }
+        };
+        let listener =
+            tokio::net::TcpListener::bind((guard.gateway, crate::hdl::HOTSPOT_TCP_PORT)).await?;
+        let port = listener.local_addr()?.port();
+        info!(
+            "BWU: hosting hotspot '{}' (gateway {}:{port}) for the sender to join",
+            guard.ssid, guard.gateway
+        );
+
+        let info = UpgradePathInfo {
+            medium: Some(UpMedium::WifiHotspot.into()),
+            wifi_hotspot_credentials: Some(WifiHotspotCredentials {
+                ssid: Some(guard.ssid.clone()),
+                password: Some(guard.password.clone()),
+                port: Some(port as i32),
+                gateway: Some(guard.gateway.to_string()),
+                frequency: Some(guard.frequency),
+            }),
+            supports_client_introduction_ack: Some(true),
+            ..Default::default()
+        };
+        self.encrypt_and_send(&Self::bwu_frame(
+            EventType::UpgradePathAvailable,
+            Some(info),
+            None,
+        ))
+        .await?;
+
+        // The phone must enable its radio, join our network and get DHCP —
+        // allow generously, while keeping the BLE channel read.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(45);
+        let mut tcp = loop {
+            tokio::select! {
+                accepted = listener.accept() => match accepted {
+                    Ok((s, peer)) => {
+                        info!("BWU: sender joined our hotspot and connected from {peer}");
+                        break s;
+                    }
+                    Err(e) => {
+                        warn!("BWU: accept on the hotspot failed ({e}); staying on BLE");
+                        self.bwu_try_hotspot = crate::utils::local_ipv4().is_none();
+                        self.schedule_bwu_retry();
+                        return Ok(());
+                    }
+                },
+                frame = self.read_encrypted_offline_frame() => {
+                    let offline = frame?;
+                    let is_upgrade_failure = offline
+                        .v1
+                        .as_ref()
+                        .filter(|v| {
+                            v.r#type()
+                                == location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation
+                        })
+                        .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref())
+                        .map(|b| b.event_type() == EventType::UpgradeFailure)
+                        .unwrap_or(false);
+                    if is_upgrade_failure {
+                        warn!("BWU: sender couldn't join our hotspot (UPGRADE_FAILURE); staying on BLE");
+                        self.bwu_try_hotspot = crate::utils::local_ipv4().is_none();
+                        self.schedule_bwu_retry();
+                        return Ok(());
+                    }
+                    if let Err(e) = self.process_offline_frame(offline).await {
+                        debug!("BWU hotspot wait: error processing frame: {e}");
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    warn!("BWU: sender never joined our hotspot; staying on BLE");
+                    self.bwu_try_hotspot = crate::utils::local_ipv4().is_none();
+                    self.schedule_bwu_retry();
+                    return Ok(());
+                }
+            }
+        };
+
+        // Plaintext CLIENT_INTRODUCTION → CLIENT_INTRODUCTION_ACK on the new socket.
+        let intro = read_frame_from(&mut tcp).await?;
+        if let Ok(f) = OfflineFrame::decode(&*intro) {
+            debug!(
+                "BWU: hotspot intro frame type={:?}",
+                f.v1.as_ref().map(|v| v.r#type())
+            );
+        }
+        send_frame_on(&mut tcp, &Self::bwu_ack_frame().encode_to_vec()).await?;
+
+        // Drain the BLE channel completely, then swap (see drain_prior_channel).
+        self.drain_prior_channel().await?;
+
+        // Tell the phone the prior (BLE) channel is closing, then swap.
+        let disc = OfflineFrame {
+            version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+            v1: Some(location_nearby_connections::V1Frame {
+                r#type: Some(location_nearby_connections::v1_frame::FrameType::Disconnection.into()),
+                disconnection: Some(location_nearby_connections::DisconnectionFrame {
+                    request_safe_to_disconnect: Some(false),
+                    ack_safe_to_disconnect: Some(false),
+                }),
+                ..Default::default()
+            }),
+        };
+        let _ = self.send_frame(disc.encode_to_vec()).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        self.hotspot_guard = Some(guard);
+        self.socket = crate::hdl::MigratableStream::Tcp(tcp);
+        info!("BWU: upgraded to our hosted hotspot; payload continues over TCP");
+        // Announce ourselves on the new channel (both sides restart keep-alives
+        // after a channel switch); also un-sticks a sender waiting to see the
+        // receiver's traffic before resuming the payload.
+        let _ = self.send_keepalive(false).await;
         Ok(())
     }
 }

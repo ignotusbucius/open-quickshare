@@ -12,8 +12,6 @@
 > The full git history (and therefore authorship) of both is preserved in this repository.
 > Licensed GPL‑3, like the projects it builds on.
 
-![demo image](.github/demo.png)
-
 Why "complete"
 --------------------------
 
@@ -123,9 +121,19 @@ cd open-quickshare/core_lib
 cargo build --release
 ```
 
-The library (`rqs_lib`) is what implements everything; it powers the upstream frontend in
-this repository and integrates with the [Packet](https://github.com/nozwock/packet) GTK app
-via a Cargo `[patch]` (a small Packet patch adding BLE recipients is pending as a PR).
+The library (`core_lib`, crate `rqs_lib`) is the product — it implements the entire protocol
+stack described above.
+
+### Frontend status
+
+- **Verified frontend**: the [Packet](https://github.com/nozwock/packet) GTK app, integrated
+  via a Cargo `[patch]` pointing at this `core_lib`. All capabilities in the tables above
+  were verified end‑to‑end through it (a small Packet patch adding BLE recipients is pending
+  as a PR).
+- **Bundled Tauri app (`app/`)**: inherited from upstream rquickshare, and **currently does
+  not build against this branch** — the base `ble-receiver` branch restructured the
+  library's channel API and the Tauri layer was never ported (this predates the
+  complete‑stack work). Porting it is a welcome contribution.
 
 <details>
 <summary>Upstream rquickshare releases (Wi‑Fi LAN only)</summary>

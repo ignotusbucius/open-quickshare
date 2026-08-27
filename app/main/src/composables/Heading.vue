@@ -21,9 +21,9 @@ const emit = defineEmits(['openSettings']);
 		<!-- Header: app brand + device name left, options right -->
 		<div>
 			<div class="flex items-center gap-2">
-				<span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500" />
-				<h1 class="text-sm font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">
-					Open QuickShare
+				<img src="/icon.png" alt="" class="w-7 h-7">
+				<h1 class="brand-font text-lg font-medium">
+					<span class="text-green-600 dark:text-green-400">open</span><span>quickshare</span>
 				</h1>
 			</div>
 			<h4 class="text-md mt-2">

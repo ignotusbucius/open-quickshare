@@ -17,9 +17,9 @@
     "resources": [],
     "externalBin": [],
     "copyright": "",
-    "category": "DeveloperTool",
-    "shortDescription": "",
-    "longDescription": "",
+    "category": "Utility",
+    "shortDescription": "Quick Share for Linux — share files with Android over Wi-Fi or Bluetooth",
+    "longDescription": "Complete open-source Quick Share implementation for Linux: send and receive files with Android devices over Bluetooth LE, with automatic upgrades to Wi-Fi LAN or Wi-Fi Direct for fast transfers — no shared network required. Based on rquickshare.",
     "macOS": {
       "frameworks": [],
       "exceptionDomain": "",

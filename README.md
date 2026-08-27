@@ -1,4 +1,5 @@
 <div align="center">
+  <img src=".github/icon.png" alt="Open QuickShare icon" width="128">
   <h1>open-quickshare</h1>
 
   <p>

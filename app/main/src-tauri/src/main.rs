@@ -73,6 +73,7 @@ async fn main() -> Result<(), anyhow::Error> {
             cmds::get_hostname,
             cmds::get_device_name,
             cmds::set_device_name,
+            cmds::resolve_paste,
             cmds::send_payload,
             cmds::send_to_rs,
         ])

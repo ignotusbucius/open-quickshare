@@ -205,6 +205,7 @@ export default {
 			isAppInForeground: false,
 			discoveryRunning: ref(false),
 			isDragHovering: ref(false),
+			pasteInFlight: ref(false),
 
 			requests: ref<ChannelMessage[]>([]),
 			endpointsInfo: ref<EndpointInfo[]>([]),
@@ -334,6 +335,19 @@ export default {
 				})
 			);
 
+			// Paste-to-share: Ctrl/Cmd+V and Ctrl+Shift+V share the clipboard
+			// (files as-is, text as a generated .txt). WebKitGTK never fires a
+			// 'paste' event outside editable elements, so listen for the key.
+			const onPasteKey = (e: KeyboardEvent) => {
+				if (!(e.ctrlKey || e.metaKey) || e.altKey || (e.key !== 'v' && e.key !== 'V') || e.repeat) return;
+				const el = document.activeElement;
+				if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable)) return;
+				e.preventDefault();
+				this.pasteFromClipboard();
+			};
+			window.addEventListener('keydown', onPasteKey);
+			this.unlisten.push(() => window.removeEventListener('keydown', onPasteKey));
+
 			await this.getLatestVersion(this);
 		});
 	},
@@ -359,6 +373,26 @@ export default {
 	},
 
 	methods: {
+		pasteFromClipboard: async function() {
+			if (this.pasteInFlight) return;
+			this.pasteInFlight = true;
+			try {
+				const res = await invoke('resolve_paste') as { paths: string[], is_text: boolean };
+				this.outboundPayload = {
+					Files: res.paths
+				} as OutboundPayload;
+				if (!this.discoveryRunning) await invoke('start_discovery');
+				this.discoveryRunning = true;
+				this.toastStore.addToast(
+					res.is_text ? "Sharing clipboard text as a .txt file" : `Sharing ${res.paths.length} file(s) from clipboard`,
+					ToastType.Success);
+			} catch (e) {
+				this.toastStore.addToast(typeof e === 'string' ? e : "Nothing shareable in clipboard", ToastType.Error);
+				console.error("Paste failed", e);
+			} finally {
+				this.pasteInFlight = false;
+			}
+		},
 		writeToClipboard: async function(text: string) {
 			try {
 				await writeText(text);

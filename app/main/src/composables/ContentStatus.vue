@@ -67,6 +67,9 @@ function openFilePicker() {
 		<h4 class="mt-2 font-medium">
 			Drop files to send
 		</h4>
+		<p class="text-xs opacity-60 mt-1">
+			or press Ctrl+V to paste files or text
+		</p>
 		<div class="btn mt-2 active:scale-95 transition duration-150 ease-in-out" @click="openFilePicker()">
 			<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24">
 				<path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z" />

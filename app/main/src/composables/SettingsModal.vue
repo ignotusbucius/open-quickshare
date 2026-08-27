@@ -50,7 +50,8 @@ function openDownloadPicker() {
 					</label>
 				</div>
 				<div class="form-control rounded-xl p-3">
-					<span class="label-text mb-2">Appearance</span>
+					<span class="label-text block">Appearance</span>
+					<span class="text-xs opacity-60 block mb-2">"System" follows your desktop's light/dark theme</span>
 					<div class="flex flex-row gap-1 bg-gray-500 bg-opacity-10 rounded-lg p-1">
 						<button
 							v-for="opt in (['system', 'light', 'dark'] as const)" :key="opt"
@@ -62,27 +63,37 @@ function openDownloadPicker() {
 					</div>
 				</div>
 				<div class="form-control hover:bg-gray-500 hover:bg-opacity-10 rounded-xl p-3">
-					<label class="cursor-pointer flex flex-row justify-between items-center" @click="utils.setAutoStart(vm, !vm.autostart)">
-						<span class="label-text">Start on boot</span>
+					<label class="cursor-pointer flex flex-row justify-between items-center gap-3" @click="utils.setAutoStart(vm, !vm.autostart)">
+						<span class="flex flex-col">
+							<span class="label-text">Start on boot</span>
+							<span class="text-xs opacity-60">Launches Open QuickShare automatically when you log in</span>
+						</span>
 						<input type="checkbox" :checked="vm.autostart" class="checkbox focus:outline-none">
 					</label>
 				</div>
 				<div class="form-control hover:bg-gray-500 hover:bg-opacity-10 rounded-xl p-3">
-					<label class="cursor-pointer flex flex-row justify-between items-center" @click="utils.setRealClose(vm, !vm.realclose)">
-						<span class="label-text">Keep running on close</span>
+					<label class="cursor-pointer flex flex-row justify-between items-center gap-3" @click="utils.setRealClose(vm, !vm.realclose)">
+						<span class="flex flex-col">
+							<span class="label-text">Keep running on close</span>
+							<span class="text-xs opacity-60">Closing the window keeps sharing active in the system tray</span>
+						</span>
 						<input type="checkbox" :checked="!vm.realclose" class="checkbox focus:outline-none">
 					</label>
 				</div>
 				<div class="form-control hover:bg-gray-500 hover:bg-opacity-10 rounded-xl p-3">
-					<label class="cursor-pointer flex flex-row justify-between items-center" @click="utils.setStartMinimized(vm, !vm.startminimized)">
-						<span class="label-text">Start minimized</span>
+					<label class="cursor-pointer flex flex-row justify-between items-center gap-3" @click="utils.setStartMinimized(vm, !vm.startminimized)">
+						<span class="flex flex-col">
+							<span class="label-text">Start minimized</span>
+							<span class="text-xs opacity-60">Starts hidden in the system tray instead of opening the window</span>
+						</span>
 						<input type="checkbox" :checked="vm.startminimized" class="checkbox focus:outline-none">
 					</label>
 				</div>
 				<div class="form-control hover:bg-gray-500 hover:bg-opacity-10 rounded-xl p-3">
 					<label class="cursor-pointer flex flex-col items-start" @click="openDownloadPicker()">
-						<span class="">Change download folder</span>
-						<span class="overflow-hidden whitespace-nowrap text-ellipsis text-xs max-w-80">
+						<span class="label-text">Change download folder</span>
+						<span class="text-xs opacity-60">Where received files are saved</span>
+						<span class="overflow-hidden whitespace-nowrap text-ellipsis text-xs opacity-60 max-w-80">
 							> {{ vm.downloadPath ?? 'OS User\'s download folder' }}
 						</span>
 					</label>

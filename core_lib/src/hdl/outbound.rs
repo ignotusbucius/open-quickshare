@@ -311,6 +311,36 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
 
     pub async fn send_connection_request(&mut self) -> Result<(), anyhow::Error> {
         let device_name = DEVICE_NAME.read().unwrap().clone();
+        // Experiment knob for the paired-key-disconnect hunt: `PACKET_SEND_META`
+        // = `plain` (no medium_metadata at all), `norole` (metadata without the
+        // host-role/auth fields), `linux` (full metadata; only the os_info shim
+        // is dropped, see send of the connection response). Unset = default.
+        let meta_exp = std::env::var("PACKET_SEND_META")
+            .ok()
+            .map(|v| v.to_ascii_lowercase());
+        let medium_metadata = match meta_exp.as_deref() {
+            Some("plain") => None,
+            Some("norole") => Some(location_nearby_connections::MediumMetadata {
+                supports_5_ghz: Some(true),
+                ip_address: crate::utils::local_ipv4().map(|ip| ip.to_vec()),
+                ap_frequency: Some(-1),
+                ..Default::default()
+            }),
+            _ => Some(location_nearby_connections::MediumMetadata {
+                supports_5_ghz: Some(true),
+                ip_address: crate::utils::local_ipv4().map(|ip| ip.to_vec()),
+                ap_frequency: Some(-1),
+                medium_role: Some(location_nearby_connections::MediumRole {
+                    support_wifi_direct_group_owner: Some(true),
+                    support_wifi_hotspot_host: Some(true),
+                    ..Default::default()
+                }),
+                supported_wifi_direct_auth_types: vec![
+                    location_nearby_connections::medium_metadata::WifiDirectAuthType::WifiDirectWithPassword.into(),
+                ],
+                ..Default::default()
+            }),
+        };
         let request = location_nearby_connections::OfflineFrame {
             version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
             v1: Some(location_nearby_connections::V1Frame {
@@ -333,20 +363,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                     // to), and that we can HOST a Wi-Fi Direct group / hotspot
                     // ourselves (the dynamic role switch it uses when there is
                     // no shared LAN — the Quick Share for Windows path).
-                    medium_metadata: Some(location_nearby_connections::MediumMetadata {
-                        supports_5_ghz: Some(true),
-                        ip_address: crate::utils::local_ipv4().map(|ip| ip.to_vec()),
-                        ap_frequency: Some(-1),
-                        medium_role: Some(location_nearby_connections::MediumRole {
-                            support_wifi_direct_group_owner: Some(true),
-                            support_wifi_hotspot_host: Some(true),
-                            ..Default::default()
-                        }),
-                        supported_wifi_direct_auth_types: vec![
-                            location_nearby_connections::medium_metadata::WifiDirectAuthType::WifiDirectWithPassword.into(),
-                        ],
-                        ..Default::default()
-                    }),
+                    medium_metadata,
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -467,17 +484,30 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                     location_nearby_connections::v1_frame::FrameType::ConnectionResponse.into(),
                 ),
                 connection_response: Some(location_nearby_connections::ConnectionResponseFrame {
-					response: Some(location_nearby_connections::connection_response_frame::ResponseStatus::Accept.into()),
-					// Present as WINDOWS: GmsCore's dynamic role switch (the phone
-					// asking US to host the Wi-Fi Direct/hotspot link when there is
-					// no shared LAN) only fires for an Android⇄Windows pair — it has
-					// no rule for LINUX. Same interop shim as Quick Share for
-					// Windows; the protocol is identical from here on.
-					os_info: Some(location_nearby_connections::OsInfo {
-						r#type: Some(location_nearby_connections::os_info::OsType::Windows.into())
-					}),
-					..Default::default()
-				}),
+                    response: Some(
+                        location_nearby_connections::connection_response_frame::ResponseStatus::Accept.into(),
+                    ),
+                    // Present as WINDOWS: GmsCore's dynamic role switch (the phone
+                    // asking US to host the Wi-Fi Direct/hotspot link when there is
+                    // no shared LAN) only fires for an Android⇄Windows pair — it has
+                    // no rule for LINUX. Same interop shim as Quick Share for
+                    // Windows; the protocol is identical from here on.
+                    // `PACKET_SEND_META=plain|linux` drops the shim (paired-key
+                    // disconnect experiment).
+                    os_info: match std::env::var("PACKET_SEND_META")
+                        .ok()
+                        .map(|v| v.to_ascii_lowercase())
+                        .as_deref()
+                    {
+                        Some("plain") | Some("linux") => None,
+                        _ => Some(location_nearby_connections::OsInfo {
+                            r#type: Some(
+                                location_nearby_connections::os_info::OsType::Windows.into(),
+                            ),
+                        }),
+                    },
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
         };

@@ -14,6 +14,15 @@ defineProps({
 <template>
 	<div>
 		<div class="relative w-[62px] h-[62px]">
+			<!-- Indeterminate spinner while connecting / handshaking, before any
+			     byte-progress exists to draw the real ring. -->
+			<svg
+				v-if="!item.ack_bytes && (item.connecting || item.state === 'SentIntroduction')"
+				width="62" height="62" viewBox="0 0 250 250"
+				class="circular-progress spinner-ring">
+				<circle class="bg" />
+				<circle class="fg" />
+			</svg>
 			<svg
 				v-if="item.ack_bytes" width="62" height="62" viewBox="0 0 250 250"
 				class="circular-progress" :style="utils.getProgress(item)"

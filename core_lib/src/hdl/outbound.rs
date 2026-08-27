@@ -1397,26 +1397,35 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 )
                 .await;
 
+                let total: i64 = self
+                    .state
+                    .transferred_files
+                    .values()
+                    .map(|f| f.total_size)
+                    .sum();
+
                 // Take the phone's Wi-Fi upgrade if it offers one (we connect out
                 // to it — the phone, as advertiser, hosts). No-op on a Wi-Fi/TCP
                 // send. If it upgrades, the transfer streams fast over Wi-Fi.
-                let upgraded = match self.try_wifi_upgrade_client().await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!("BWU(send): upgrade attempt errored ({e}); staying on BLE");
-                        false
+                // A payload that fits over BLE skips the upgrade outright: a
+                // multi-second Wi-Fi Direct join (which also drops this machine
+                // off its own network) is never worth it for a few bytes.
+                let upgraded = if self.socket.is_low_bandwidth() && total <= BLE_SEND_MAX_BYTES {
+                    info!("BWU(send): {total}-byte payload stays on BLE; skipping Wi-Fi upgrade");
+                    false
+                } else {
+                    match self.try_wifi_upgrade_client().await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!("BWU(send): upgrade attempt errored ({e}); staying on BLE");
+                            false
+                        }
                     }
                 };
 
                 // If we're still on a pure-BLE link, a large payload would stall
                 // then get dropped by the phone. Refuse it up front with guidance.
                 if !upgraded && self.socket.is_low_bandwidth() {
-                    let total: i64 = self
-                        .state
-                        .transferred_files
-                        .values()
-                        .map(|f| f.total_size)
-                        .sum();
                     if total > BLE_SEND_MAX_BYTES {
                         warn!(
                             "Payload {total} bytes is too large to send over Bluetooth; \

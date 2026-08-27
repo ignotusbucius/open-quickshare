@@ -229,6 +229,17 @@ body,
     @apply !stroke-red-400
 }
 
+/* Indeterminate state: a quarter arc spinning around the device icon. */
+.circular-progress.spinner-ring {
+	--progress: 25;
+	animation: ring-spin 1s linear infinite;
+}
+
+@keyframes ring-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
 /* --- Dark theme overrides for the hand-rolled (non-utility) pieces --- */
 
 /* SVG icons carry no explicit fill, so let them follow the current text

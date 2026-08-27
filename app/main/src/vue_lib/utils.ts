@@ -26,7 +26,11 @@ function _displayedItems(vm: TauriVM): Array<DisplayedItem> {
 		const idx = ndisplayed.findIndex((nel) => el.id == nel.id);
 		const elem: DisplayedItem = {
 			id: el.id,
-			name: el.meta?.source?.name ?? 'Unknown',
+			// A failure before the handshake carries no metadata; the endpoint
+			// list still knows who was clicked.
+			name: el.meta?.source?.name
+				?? vm.endpointsInfo.find((e) => e.id === el.id)?.name
+				?? 'Unknown',
 			deviceType: el.meta?.source?.device_type ?? 'Unknown',
 			endpoint: false,
 

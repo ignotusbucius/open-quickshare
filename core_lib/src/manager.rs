@@ -10,6 +10,11 @@ use crate::utils::RemoteDeviceInfo;
 
 const INNER_NAME: &str = "TcpServer";
 
+/// Payloads at or below this ride BLE without a Wi-Fi upgrade (matches the
+/// send path's own pure-BLE size guard in `outbound.rs`).
+#[cfg(all(feature = "experimental", target_os = "linux"))]
+const SMALL_SEND_BYTES: u64 = 1024 * 1024;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SendInfo {
     pub id: String,
@@ -191,7 +196,20 @@ impl TcpServer {
         let mut connected = None;
         let mut last_err: Option<anyhow::Error> = None;
         for round in 1..=3u8 {
-            let targets = scan_once(&adapter, Duration::from_secs(20), Some(&si.name)).await?;
+            if round > 1 {
+                // Give BlueZ time to wind the previous discovery/dial down --
+                // starting a new scan immediately fails with "operation
+                // already in progress".
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            let targets = match scan_once(&adapter, Duration::from_secs(20), Some(&si.name)).await {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!("{INNER_NAME}: scan round {round} failed ({e}); retrying");
+                    last_err = Some(e);
+                    continue;
+                }
+            };
             let Some(target) = targets.into_iter().find(|t| !bad_addrs.contains(&t.addr)) else {
                 last_err = Some(anyhow::anyhow!(
                     "{} is no longer advertising over BLE",
@@ -218,6 +236,15 @@ impl TcpServer {
             return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("BLE connect failed")));
         };
 
+        // A payload that fits comfortably over BLE never needs a Wi-Fi
+        // upgrade: a few bytes of pasted text shouldn't cost a multi-second
+        // Wi-Fi Direct join that also drops this machine off its own network.
+        let OutboundPayload::Files(files) = &si.ob;
+        let total_bytes: u64 = files
+            .iter()
+            .filter_map(|f| std::fs::metadata(f).ok().map(|m| m.len()))
+            .sum();
+
         let mut or = OutboundRequest::new(
             self.endpoint_id,
             stream,
@@ -226,12 +253,19 @@ impl TcpServer {
             si.ob,
             rdi,
         );
-        // Advertise WIFI_LAN (5) + WIFI_DIRECT (8) + WIFI_HOTSPOT (3) +
-        // BLE_L2CAP (10). The phone (advertiser) picks the best and offers it:
-        // same LAN → WIFI_LAN (we connect to its ip:port); no shared LAN →
-        // WIFI_DIRECT (it hosts its own group, we join it). Either way the
-        // payload leaves BLE for Wi-Fi speed.
-        or.set_mediums(vec![5, 8, 3, 10]);
+        if total_bytes <= SMALL_SEND_BYTES {
+            // BLE_L2CAP (10) only: the phone (advertiser) has no Wi-Fi medium
+            // in common with us, so it never offers an upgrade.
+            info!("{INNER_NAME}: {total_bytes}-byte payload; BLE only, no Wi-Fi upgrade");
+            or.set_mediums(vec![10]);
+        } else {
+            // Advertise WIFI_LAN (5) + WIFI_DIRECT (8) + WIFI_HOTSPOT (3) +
+            // BLE_L2CAP (10). The phone (advertiser) picks the best and offers it:
+            // same LAN → WIFI_LAN (we connect to its ip:port); no shared LAN →
+            // WIFI_DIRECT (it hosts its own group, we join it). Either way the
+            // payload leaves BLE for Wi-Fi speed.
+            or.set_mediums(vec![5, 8, 3, 10]);
+        }
 
         or.send_connection_request().await?;
         or.send_ukey2_client_init().await?;

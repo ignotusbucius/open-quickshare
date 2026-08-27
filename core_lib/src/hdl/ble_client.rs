@@ -47,6 +47,10 @@ const RECV_MTU: u16 = 4096;
 /// Hard cap on the CoC connect itself (Stage 0 measured ~0.5s; a phone that
 /// wandered out of range should fail fast, not hang the send).
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
+/// How much longer a scan keeps hoping for a live advert once a cached
+/// candidate is already in hand -- the cache entry is usually still valid,
+/// so waiting out the whole window before trying it just burns seconds.
+const GHOST_WAIT: Duration = Duration::from_secs(6);
 /// How long to wait for the phone's `DataConnectionReady` after we ask.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -179,6 +183,9 @@ pub async fn scan_once(
     let mut events = adapter.discover_devices_with_changes().await?;
     let uuid = Uuid::from_u16(QS_SERVICE_UUID);
     let deadline = Instant::now() + timeout;
+    // Pulled in when a cached candidate shows up: keep scanning for a live
+    // advert only [`GHOST_WAIT`] longer, then settle for the cache entry.
+    let mut wake = deadline;
     let mut targets: HashMap<Address, BleTarget> = HashMap::new();
     let mut logged: std::collections::HashSet<Address> = std::collections::HashSet::new();
     // A DeviceAdded served straight from BlueZ's cache can carry a
@@ -189,7 +196,7 @@ pub async fn scan_once(
 
     loop {
         let ev = tokio::select! {
-            _ = tokio::time::sleep_until(deadline) => break,
+            _ = tokio::time::sleep_until(wake) => break,
             ev = events.next() => match ev { Some(e) => e, None => break },
         };
         let addr = match ev {
@@ -229,6 +236,9 @@ pub async fn scan_once(
                 );
             }
             if !live {
+                if ghost.is_none() {
+                    wake = wake.min(Instant::now() + GHOST_WAIT);
+                }
                 ghost.get_or_insert(t);
                 continue;
             }

@@ -190,9 +190,12 @@ impl TcpServer {
 
         // The phone rotates its LE address (and PSM) every few minutes, and a
         // scan can still surface the pre-rotation address from BlueZ's cache.
-        // A failed dial therefore retries with a fresh scan, excluding every
-        // address that already failed.
-        let mut bad_addrs: Vec<bluer::Address> = Vec::new();
+        // A failed dial retries with a fresh scan. Addresses that already
+        // failed are deprioritized but NOT banned: a dial failure is usually
+        // transient (BlueZ mid-wind-down after the scan), not proof the
+        // address is dead -- the very same address often connects on the
+        // next, settled attempt.
+        let mut tried: Vec<bluer::Address> = Vec::new();
         let mut connected = None;
         let mut last_err: Option<anyhow::Error> = None;
         for round in 1..=3u8 {
@@ -200,7 +203,7 @@ impl TcpServer {
                 // Give BlueZ time to wind the previous discovery/dial down --
                 // starting a new scan immediately fails with "operation
                 // already in progress".
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(3)).await;
             }
             let targets = match scan_once(&adapter, Duration::from_secs(20), Some(&si.name)).await {
                 Ok(t) => t,
@@ -210,7 +213,13 @@ impl TcpServer {
                     continue;
                 }
             };
-            let Some(target) = targets.into_iter().find(|t| !bad_addrs.contains(&t.addr)) else {
+            let (fresh, retry): (Vec<_>, Vec<_>) =
+                targets.into_iter().partition(|t| !tried.contains(&t.addr));
+            let Some(target) = fresh
+                .into_iter()
+                .next()
+                .or_else(|| retry.into_iter().next())
+            else {
                 last_err = Some(anyhow::anyhow!(
                     "{} is no longer advertising over BLE",
                     si.name
@@ -227,7 +236,7 @@ impl TcpServer {
                         "{INNER_NAME}: dial {} failed on round {round} ({e}); re-scanning",
                         target.addr
                     );
-                    bad_addrs.push(target.addr);
+                    tried.push(target.addr);
                     last_err = Some(e);
                 }
             }

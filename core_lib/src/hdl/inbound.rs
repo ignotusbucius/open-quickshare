@@ -1926,6 +1926,16 @@ impl InboundRequest<crate::hdl::MigratableStream> {
             };
         }
         if self.bwu_try_hotspot {
+            // Hosting a hotspot tears this machine off its own Wi-Fi -- don't
+            // do that before the user has even accepted the transfer. The
+            // harmless WIFI_LAN offer still goes out early (matching Android),
+            // but the disruptive path waits for consent; poll again shortly
+            // without burning a retry-ladder slot.
+            if self.state.state != TransferState::ReceivingFiles {
+                debug!("BWU: hotspot path deferred until the transfer is accepted");
+                self.bwu_retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(2));
+                return Ok(());
+            }
             return self.do_bwu_hotspot().await;
         }
 

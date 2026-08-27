@@ -18,6 +18,7 @@ function _displayedItems(vm: TauriVM): Array<DisplayedItem> {
 			name: el.name ?? 'Unknown',
 			deviceType: el.rtype ?? 'Unknown',
 			endpoint: true,
+			connecting: vm.connectingId === el.id,
 		})
 	});
 
@@ -120,6 +121,7 @@ async function clearSending(vm: TauriVM, ) {
 	vm.outboundPayload = undefined;
 	vm.discoveryRunning = false;
 	vm.endpointsInfo = [];
+	vm.connectingId = null;
 }
 
 function removeRequest(vm: TauriVM, id: string) {
@@ -149,6 +151,10 @@ async function sendInfo(vm: TauriVM, eid: string) {
 		ble: isBle,
 	} as SendInfo;
 
+	// Immediate feedback: a BLE connect can take seconds (scan + dial), and a
+	// click with no visible reaction reads as a dead button.
+	vm.connectingId = ei.id;
+
 	await vm.invoke('send_payload', { message: msg });
 }
 
@@ -168,6 +174,14 @@ async function sendCmd(vm: TauriVM, id: string, action: ChannelAction) {
 
 function blured() {
 	(document.activeElement as any).blur();
+}
+
+function fmtBytes(n: number): string {
+	if (!Number.isFinite(n) || n < 0) return '';
+	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+	let v = n, i = 0;
+	while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+	return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
 function getProgress(item: DisplayedItem): string {
@@ -275,6 +289,7 @@ export const utils = {
 	getDeviceName,
 	setTheme,
 	getTheme,
-	applyTheme
+	applyTheme,
+	fmtBytes
 };
 export type UtilsType = typeof utils;

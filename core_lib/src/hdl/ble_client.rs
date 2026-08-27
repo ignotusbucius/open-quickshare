@@ -46,7 +46,7 @@ const QS_SERVICE_UUID: u16 = 0xFEF3;
 const RECV_MTU: u16 = 4096;
 /// Hard cap on the CoC connect itself (Stage 0 measured ~0.5s; a phone that
 /// wandered out of range should fail fast, not hang the send).
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 /// How long to wait for the phone's `DataConnectionReady` after we ask.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -181,6 +181,11 @@ pub async fn scan_once(
     let deadline = Instant::now() + timeout;
     let mut targets: HashMap<Address, BleTarget> = HashMap::new();
     let mut logged: std::collections::HashSet<Address> = std::collections::HashSet::new();
+    // A DeviceAdded served straight from BlueZ's cache can carry a
+    // pre-rotation address/PSM the phone no longer answers on. A device with
+    // a live RSSI is currently on the air; cache ghosts are kept only as a
+    // deadline fallback when nothing live shows up.
+    let mut ghost: Option<BleTarget> = None;
 
     loop {
         let ev = tokio::select! {
@@ -212,11 +217,20 @@ pub async fn scan_once(
             if want_name.is_some_and(|w| !t.rdi.name.to_lowercase().contains(&w.to_lowercase())) {
                 continue;
             }
+            let live = dev.rssi().await.ok().flatten().is_some();
             if logged.insert(addr) {
                 info!(
-                    "{INNER_NAME}: receiver {} ({}) psm {} name {:?}",
-                    addr, addr_type, t.psm, t.rdi.name
+                    "{INNER_NAME}: receiver {} ({}) psm {} name {:?}{}",
+                    addr,
+                    addr_type,
+                    t.psm,
+                    t.rdi.name,
+                    if live { "" } else { " (cached)" }
                 );
+            }
+            if !live {
+                ghost.get_or_insert(t);
+                continue;
             }
             targets.insert(addr, t);
             // Enough to connect; stop scanning so the CoC connect isn't racing
@@ -225,6 +239,11 @@ pub async fn scan_once(
         }
     }
 
+    if targets.is_empty() {
+        if let Some(g) = ghost {
+            targets.insert(g.addr, g);
+        }
+    }
     Ok(targets.into_values().collect())
 }
 
@@ -382,7 +401,13 @@ pub async fn dial(
                 tokio::time::sleep(Duration::from_millis(700)).await;
                 continue;
             }
-            Err(_) => anyhow::bail!("L2CAP connect to {} timed out", target.addr),
+            Err(_) => {
+                debug!(
+                    "{INNER_NAME}: connect attempt {attempt} to {} timed out",
+                    target.addr
+                );
+                continue;
+            }
         };
         debug!(
             "{INNER_NAME}: connect returned in {:?} (attempt {attempt}); validating",

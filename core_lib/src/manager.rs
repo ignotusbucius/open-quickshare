@@ -59,8 +59,19 @@ impl TcpServer {
                 }
                 Some(i) = self.connect_receiver.recv() => {
                     info!("{INNER_NAME}: connect_receiver: got {:?}", i);
+                    let report_id = i.id.clone();
                     if let Err(e) = self.connect(cctk, i).await {
                         error!("{INNER_NAME}: error sending: {}", e.to_string());
+                        // Surface the failure -- a click that only dies in the
+                        // log looks like a dead button in the UI.
+                        let _ = self.sender.send(ChannelMessage {
+                            id: report_id,
+                            msg: channel::Message::Client(MessageClient {
+                                kind: TransferKind::Outbound,
+                                state: Some(TransferState::Disconnected),
+                                metadata: Default::default(),
+                            }),
+                        });
                     }
                 }
                 r = self.tcp_listener.accept() => {
@@ -172,13 +183,40 @@ impl TcpServer {
         // Airtime for the scan/connect; also stops our own receiver scanner.
         let _suppressor = crate::hdl::BleScanSuppressor::new();
 
-        let targets = scan_once(&adapter, Duration::from_secs(20), Some(&si.name)).await?;
-        let target = targets
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("{} is no longer advertising over BLE", si.name))?;
-
-        let stream = dial(&adapter, &target).await?;
+        // The phone rotates its LE address (and PSM) every few minutes, and a
+        // scan can still surface the pre-rotation address from BlueZ's cache.
+        // A failed dial therefore retries with a fresh scan, excluding every
+        // address that already failed.
+        let mut bad_addrs: Vec<bluer::Address> = Vec::new();
+        let mut connected = None;
+        let mut last_err: Option<anyhow::Error> = None;
+        for round in 1..=3u8 {
+            let targets = scan_once(&adapter, Duration::from_secs(20), Some(&si.name)).await?;
+            let Some(target) = targets.into_iter().find(|t| !bad_addrs.contains(&t.addr)) else {
+                last_err = Some(anyhow::anyhow!(
+                    "{} is no longer advertising over BLE",
+                    si.name
+                ));
+                continue;
+            };
+            match dial(&adapter, &target).await {
+                Ok(stream) => {
+                    connected = Some((stream, target.rdi));
+                    break;
+                }
+                Err(e) => {
+                    warn!(
+                        "{INNER_NAME}: dial {} failed on round {round} ({e}); re-scanning",
+                        target.addr
+                    );
+                    bad_addrs.push(target.addr);
+                    last_err = Some(e);
+                }
+            }
+        }
+        let Some((stream, rdi)) = connected else {
+            return Err(last_err.unwrap_or_else(|| anyhow::anyhow!("BLE connect failed")));
+        };
 
         let mut or = OutboundRequest::new(
             self.endpoint_id,
@@ -186,7 +224,7 @@ impl TcpServer {
             si.id,
             self.sender.clone(),
             si.ob,
-            target.rdi,
+            rdi,
         );
         // Advertise WIFI_LAN (5) + WIFI_DIRECT (8) + WIFI_HOTSPOT (3) +
         // BLE_L2CAP (10). The phone (advertiser) picks the best and offers it:

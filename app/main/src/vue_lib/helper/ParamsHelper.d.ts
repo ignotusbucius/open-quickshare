@@ -26,6 +26,7 @@ export interface TauriVM {
     downloadPath: string | undefined;
     hostname: string | undefined;
     theme: 'light' | 'dark' | 'system';
+    connectingId: string | null;
     settingsOpen: boolean;
     new_version: string | null;
     enable: () => Promise<void>;

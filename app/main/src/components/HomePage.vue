@@ -23,6 +23,10 @@
 							{{ item.name }}
 						</h4>
 
+						<p v-if="item.connecting && !item.state" class="mt-1 text-sm opacity-60">
+							Connecting…
+						</p>
+
 						<div v-if="item.state === 'WaitingForUserConsent'" class="flex-1 flex flex-col justify-between">
 							<p class="mt-4">
 								Wants to share {{ item.files?.join(', ') ?? item.text_description ?? 'some file(s).' }}
@@ -50,6 +54,9 @@
 							</p>
 							<p v-for="f in item.files ?? []" :key="f" class="overflow-hidden whitespace-nowrap text-ellipsis">
 								{{ f }}
+							</p>
+							<p v-if="item.total_bytes" class="text-xs opacity-60 mt-1">
+								{{ fmtBytes(item.ack_bytes ?? 0) }} of {{ fmtBytes(item.total_bytes) }}
 							</p>
 							<div class="flex flex-row justify-end gap-4 mt-1">
 								<p
@@ -226,6 +233,7 @@ export default {
 
 			hostname: ref<string>(),
 			theme: ref<'light' | 'dark' | 'system'>('system'),
+			connectingId: opt<string>(),
 
 			settingsOpen: ref<boolean>(false),
 
@@ -261,6 +269,9 @@ export default {
 			this.unlisten.push(
 				await listen('rs2js_channelmessage', async (event) => {
 					const cm = event.payload as ChannelMessage;
+					// The transfer now has a real state; the endpoint's
+					// "Connecting…" placeholder is done.
+					if (this.connectingId === cm.id) this.connectingId = null;
 					const idx = this.requests.findIndex((el) => el.id === cm.id);
 
 					if (cm.state === "Disconnected") {

@@ -50,6 +50,9 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          # A non-empty body stops GitHub from falling back to rendering the
+          # tagged commit's full message on the releases page.
+          generate_release_notes: true
           fail_on_unmatched_files: false
           files: |
             app/main/src-tauri/target/release/bundle/deb/*.deb

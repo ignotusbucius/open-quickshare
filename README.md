@@ -156,7 +156,7 @@ Two frontends drive the same `rqs_lib`, so both get every capability above:
 - **Open QuickShare** — the desktop app in this repository (`app/main`, Tauri + Vue), what the
   releases ship and the screenshot shows.
 - **[Packet](https://github.com/nozwock/packet)** — a GTK app that integrates `rqs_lib` via a
-  Cargo `[patch]`; a small patch adding BLE recipients is pending as a PR there.
+  Cargo `[patch]`.
 
 <details>
 <summary>Upstream rquickshare releases (Wi‑Fi LAN only)</summary>

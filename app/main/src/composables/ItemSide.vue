@@ -17,7 +17,7 @@ defineProps({
 			<!-- Indeterminate spinner while connecting / handshaking, before any
 			     byte-progress exists to draw the real ring. -->
 			<svg
-				v-if="!item.ack_bytes && (item.connecting || item.state === 'SentIntroduction')"
+				v-if="!item.ack_bytes && (item.connecting || item.state === 'SentUkeyClientInit' || item.state === 'SentIntroduction')"
 				width="62" height="62" viewBox="0 0 250 250"
 				class="circular-progress spinner-ring">
 				<circle class="bg" />
@@ -65,7 +65,7 @@ defineProps({
 		</div>
 
 		<p
-			v-if="(item.state === 'WaitingForUserConsent' || item.state === 'SentIntroduction') && item.pin_code"
+			v-if="(item.state === 'WaitingForUserConsent' || item.state === 'SentUkeyClientInit' || item.state === 'SentIntroduction') && item.pin_code"
 			class="text-center inline-flex gap-1 mt-4 text-sm items-center">
 			<svg xmlns="http://www.w3.org/2000/svg" height="24" viewBox="0 -960 960 960" width="24">
 				<!-- eslint-disable-next-line -->

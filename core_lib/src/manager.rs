@@ -254,6 +254,10 @@ impl TcpServer {
             .filter_map(|f| std::fs::metadata(f).ok().map(|m| m.len()))
             .sum();
 
+        // The UI knows this transfer by `si.id` (the `ble://<name>` endpoint
+        // id) -- a Disconnected report under any other id renders as a
+        // detached "Unknown" card.
+        let report_id = si.id.clone();
         let mut or = OutboundRequest::new(
             self.endpoint_id,
             stream,
@@ -279,7 +283,7 @@ impl TcpServer {
         or.send_connection_request().await?;
         or.send_ukey2_client_init().await?;
 
-        self.drive_outbound(ctk, or, si.name).await;
+        self.drive_outbound(ctk, or, report_id).await;
         Ok(())
     }
 

@@ -43,7 +43,7 @@ export const startminimizedKey = "startminimized";
 export const visibilityKey = "visibility";
 export const downloadPathKey = "download_path";
 export const deviceNameKey = "device_name";
-export const stateToDisplay: Array<Partial<State>> = ["ReceivedPairedKeyResult", "WaitingForUserConsent", "ReceivingFiles", "Disconnected",
+export const stateToDisplay: Array<Partial<State>> = ["SentUkeyClientInit", "ReceivedPairedKeyResult", "WaitingForUserConsent", "ReceivingFiles", "Disconnected",
 	"Finished", "SentIntroduction", "SendingFiles", "Cancelled", "Rejected"]
 
 export interface Toast {

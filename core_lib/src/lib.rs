@@ -230,7 +230,9 @@ impl RQS {
                     let l2cap_tcp_port = binded_addr.port();
                     let lctk = ctoken.clone();
                     tracker.spawn(async move {
-                        server.run(l2cap_advert, l2cap_sender, l2cap_tcp_port, lctk).await;
+                        server
+                            .run(l2cap_advert, l2cap_sender, l2cap_tcp_port, lctk)
+                            .await;
                     });
                 }
 
@@ -242,7 +244,13 @@ impl RQS {
                 let gatt_tcp_port = binded_addr.port();
                 let gctk = ctoken.clone();
                 tracker.spawn(async move {
-                    match crate::hdl::ReceiverGattServer::new(gatt_advert, gatt_sender, gatt_tcp_port).await {
+                    match crate::hdl::ReceiverGattServer::new(
+                        gatt_advert,
+                        gatt_sender,
+                        gatt_tcp_port,
+                    )
+                    .await
+                    {
                         Ok(srv) => {
                             if let Err(e) = srv.run(gctk).await {
                                 error!("ReceiverGattServer: {}", e);

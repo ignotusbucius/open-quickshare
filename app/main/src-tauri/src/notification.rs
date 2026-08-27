@@ -1,9 +1,9 @@
 #[cfg(target_os = "linux")]
+use crate::dto::{ChannelAction, ChannelDirection, FrontChannelMessage};
+#[cfg(target_os = "linux")]
 use notify_rust::Notification;
 #[cfg(target_os = "linux")]
 use rqs_lib::Visibility;
-#[cfg(target_os = "linux")]
-use crate::dto::{ChannelAction, ChannelDirection, FrontChannelMessage};
 use tauri::AppHandle;
 #[cfg(target_os = "linux")]
 use tauri::Manager;

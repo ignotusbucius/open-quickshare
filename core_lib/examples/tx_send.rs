@@ -67,7 +67,10 @@ async fn main() -> Result<(), anyhow::Error> {
         eprintln!("no receiver found - is the phone on its Quick Share receive screen?");
         std::process::exit(1);
     };
-    info!("sending to {} ({:?}) over BLE psm {}", target.addr, target.rdi.name, target.psm);
+    info!(
+        "sending to {} ({:?}) over BLE psm {}",
+        target.addr, target.rdi.name, target.psm
+    );
 
     let stream = dial(&adapter, &target).await?;
 

@@ -4,11 +4,11 @@ use std::time::Duration;
 use mdns_sd::{AddrType, ServiceDaemon, ServiceInfo};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::watch;
-use tokio::time::{interval_at, Instant};
+use tokio::time::{Instant, interval_at};
 use tokio_util::sync::CancellationToken;
 
-use crate::utils::{gen_mdns_endpoint_info, gen_mdns_name, DeviceType};
 use crate::DEVICE_NAME;
+use crate::utils::{DeviceType, gen_mdns_endpoint_info, gen_mdns_name};
 
 const INNER_NAME: &str = "MDnsServer";
 const TICK_INTERVAL: Duration = Duration::from_secs(60);

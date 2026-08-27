@@ -22,7 +22,9 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use bluer::l2cap::{Security, SecurityLevel, Socket, SocketAddr, Stream};
-use bluer::{Adapter, AdapterEvent, Address, AddressType, DiscoveryFilter, DiscoveryTransport, Uuid, UuidExt};
+use bluer::{
+    Adapter, AdapterEvent, Address, AddressType, DiscoveryFilter, DiscoveryTransport, Uuid, UuidExt,
+};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::Instant;
@@ -31,8 +33,9 @@ use tokio::sync::broadcast::Sender;
 use tokio_util::sync::CancellationToken;
 
 use crate::hdl::{
-    CMD_REQUEST_DATA_CONNECTION, CMD_RESPONSE_DATA_CONNECTION_READY, EndpointInfo, MigratableStream,
-    SOCKET_CTRL_DISCONNECTION, SVC_HASH, build_ack_frame, build_intro_frame, read_frame, send_frame,
+    CMD_REQUEST_DATA_CONNECTION, CMD_RESPONSE_DATA_CONNECTION_READY, EndpointInfo,
+    MigratableStream, SOCKET_CTRL_DISCONNECTION, SVC_HASH, build_ack_frame, build_intro_frame,
+    read_frame, send_frame,
 };
 use crate::utils::{DeviceType, RemoteDeviceInfo};
 
@@ -188,10 +191,16 @@ pub async fn scan_once(
             AdapterEvent::DeviceAdded(a) => a,
             _ => continue,
         };
-        let Ok(dev) = adapter.device(addr) else { continue };
-        let Ok(Some(sd)) = dev.service_data().await else { continue };
+        let Ok(dev) = adapter.device(addr) else {
+            continue;
+        };
+        let Ok(Some(sd)) = dev.service_data().await else {
+            continue;
+        };
         let Some(bytes) = sd.get(&uuid) else { continue };
-        let Some(advert) = decode_receiver_advert(bytes) else { continue };
+        let Some(advert) = decode_receiver_advert(bytes) else {
+            continue;
+        };
         if !advert.visible {
             continue;
         }
@@ -200,9 +209,7 @@ pub async fn scan_once(
             // Skip phones other than the one we're after (name is stable across
             // the LE address rotation; the address is not). Case-insensitive
             // substring so a distinctive fragment selects among several phones.
-            if want_name
-                .is_some_and(|w| !t.rdi.name.to_lowercase().contains(&w.to_lowercase()))
-            {
+            if want_name.is_some_and(|w| !t.rdi.name.to_lowercase().contains(&w.to_lowercase())) {
                 continue;
             }
             if logged.insert(addr) {
@@ -244,11 +251,19 @@ async fn scan_all(adapter: &Adapter, window: Duration) -> Result<Vec<BleTarget>,
             _ = tokio::time::sleep_until(deadline) => break,
             ev = events.next() => match ev { Some(e) => e, None => break },
         };
-        let AdapterEvent::DeviceAdded(addr) = ev else { continue };
-        let Ok(dev) = adapter.device(addr) else { continue };
-        let Ok(Some(sd)) = dev.service_data().await else { continue };
+        let AdapterEvent::DeviceAdded(addr) = ev else {
+            continue;
+        };
+        let Ok(dev) = adapter.device(addr) else {
+            continue;
+        };
+        let Ok(Some(sd)) = dev.service_data().await else {
+            continue;
+        };
         let Some(bytes) = sd.get(&uuid) else { continue };
-        let Some(advert) = decode_receiver_advert(bytes) else { continue };
+        let Some(advert) = decode_receiver_advert(bytes) else {
+            continue;
+        };
         if !advert.visible {
             continue;
         }
@@ -322,7 +337,10 @@ pub async fn ble_discovery(sender: Sender<EndpointInfo>, ctk: CancellationToken)
 /// The caller MUST have stopped any discovery first: connecting while a scan is
 /// live comes back as an instantly-"connected" but dead socket (ENOTCONN on
 /// first I/O).
-pub async fn dial(adapter: &Adapter, target: &BleTarget) -> Result<MigratableStream, anyhow::Error> {
+pub async fn dial(
+    adapter: &Adapter,
+    target: &BleTarget,
+) -> Result<MigratableStream, anyhow::Error> {
     let local = adapter.address().await?;
 
     // Drop any ACL link BlueZ still holds to the phone from discovery: while one
@@ -344,7 +362,10 @@ pub async fn dial(adapter: &Adapter, target: &BleTarget) -> Result<MigratableStr
     for attempt in 1..=5 {
         let socket = Socket::<Stream>::new_stream()?;
         // The phone accepts an insecure (unbonded) channel; asking for more fails.
-        socket.set_security(Security { level: SecurityLevel::Low, key_size: 0 })?;
+        socket.set_security(Security {
+            level: SecurityLevel::Low,
+            key_size: 0,
+        })?;
         socket.set_recv_mtu(RECV_MTU)?;
         socket.bind(SocketAddr::new(local, AddressType::LePublic, 0))?;
 
@@ -363,7 +384,10 @@ pub async fn dial(adapter: &Adapter, target: &BleTarget) -> Result<MigratableStr
             }
             Err(_) => anyhow::bail!("L2CAP connect to {} timed out", target.addr),
         };
-        debug!("{INNER_NAME}: connect returned in {:?} (attempt {attempt}); validating", t0.elapsed());
+        debug!(
+            "{INNER_NAME}: connect returned in {:?} (attempt {attempt}); validating",
+            t0.elapsed()
+        );
         // Validate by sending the opening frame. When `connect()` returned
         // instantly (0), the CoC is still establishing and the first write can
         // race it (ENOTCONN); the socket usually becomes writable within a
@@ -392,7 +416,9 @@ pub async fn dial(adapter: &Adapter, target: &BleTarget) -> Result<MigratableStr
         if sent {
             info!(
                 "{INNER_NAME}: connected to {} (psm {}) in {:?} (attempt {attempt})",
-                target.addr, target.psm, t0.elapsed()
+                target.addr,
+                target.psm,
+                t0.elapsed()
             );
             stream = Some(s);
             break;
@@ -401,8 +427,9 @@ pub async fn dial(adapter: &Adapter, target: &BleTarget) -> Result<MigratableStr
         drop(s);
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    let mut stream = stream
-        .ok_or_else(|| anyhow::anyhow!("couldn't establish a live L2CAP channel to {}", target.addr))?;
+    let mut stream = stream.ok_or_else(|| {
+        anyhow::anyhow!("couldn't establish a live L2CAP channel to {}", target.addr)
+    })?;
 
     // The opening RequestDataConnection is already sent; await DataConnectionReady.
     // (Stage 0: reading before speaking gets us reset.)
@@ -421,7 +448,10 @@ pub async fn dial(adapter: &Adapter, target: &BleTarget) -> Result<MigratableStr
         if msg == [CMD_RESPONSE_DATA_CONNECTION_READY] {
             break;
         }
-        debug!("{INNER_NAME}: pre-ready frame {}", hex::encode(&msg[..msg.len().min(16)]));
+        debug!(
+            "{INNER_NAME}: pre-ready frame {}",
+            hex::encode(&msg[..msg.len().min(16)])
+        );
     }
 
     // Introduce our socket (both sides do this before data flows).

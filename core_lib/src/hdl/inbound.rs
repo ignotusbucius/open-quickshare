@@ -54,14 +54,20 @@ mod dest_name_tests {
     #[test]
     fn fixes_generic_extension_from_mime() {
         // The observed case: a PDF sent as a .tmp cache file.
-        assert_eq!(dest_file_name("cache123.tmp", "application/pdf"), "cache123.pdf");
+        assert_eq!(
+            dest_file_name("cache123.tmp", "application/pdf"),
+            "cache123.pdf"
+        );
         // No extension + a known MIME type → gains the right one.
         assert!(dest_file_name("noext", "application/pdf").ends_with(".pdf"));
         // A good, specific extension is left alone.
         assert_eq!(dest_file_name("photo.jpg", "image/jpeg"), "photo.jpg");
         assert_eq!(dest_file_name("real.pdf", "application/pdf"), "real.pdf");
         // Unknown/default MIME type → keep the sender's name untouched.
-        assert_eq!(dest_file_name("data.tmp", "application/octet-stream"), "data.tmp");
+        assert_eq!(
+            dest_file_name("data.tmp", "application/octet-stream"),
+            "data.tmp"
+        );
     }
 }
 
@@ -74,7 +80,10 @@ fn dest_file_name(name: &str, mime_type: &str) -> String {
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
-    let generic = matches!(ext.as_deref(), None | Some("tmp") | Some("bin") | Some("dat"));
+    let generic = matches!(
+        ext.as_deref(),
+        None | Some("tmp") | Some("bin") | Some("dat")
+    );
     if !generic || mime_type.is_empty() || mime_type == "application/octet-stream" {
         return name.to_string();
     }
@@ -99,7 +108,8 @@ pub fn peek_client_introduction(buf: &[u8]) -> Option<String> {
     }
     let frame = OfflineFrame::decode(&buf[4..4 + len]).ok()?;
     let v1 = frame.v1?;
-    if v1.r#type() != location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation {
+    if v1.r#type() != location_nearby_connections::v1_frame::FrameType::BandwidthUpgradeNegotiation
+    {
         return None;
     }
     let bwu = v1.bandwidth_upgrade_negotiation?;
@@ -801,10 +811,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
     /// Dispatch a decrypted OfflineFrame (payload transfers, keep-alives, …).
     /// Factored out so the bandwidth-upgrade drain can process non-BWU frames the
     /// phone keeps sending over BLE while the upgrade completes.
-    async fn process_offline_frame(
-        &mut self,
-        offline: OfflineFrame,
-    ) -> Result<(), anyhow::Error> {
+    async fn process_offline_frame(&mut self, offline: OfflineFrame) -> Result<(), anyhow::Error> {
         let v1_frame = offline
             .v1
             .as_ref()
@@ -1077,8 +1084,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                     .map(|b| b.event_type());
                 debug!("Late BWU frame: {event:?}");
                 if event == Some(EventType::LastWriteToPriorChannel) {
-                    let frame =
-                        Self::bwu_frame(EventType::SafeToClosePriorChannel, None, None);
+                    let frame = Self::bwu_frame(EventType::SafeToClosePriorChannel, None, None);
                     let _ = self.encrypt_and_send(&frame).await;
                 }
             }
@@ -1103,7 +1109,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                         .and_then(|id| self.state.payload_chunk_counts.get(&id).copied())
                         .unwrap_or(0);
                     let ack = OfflineFrame {
-                        version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
+                        version: Some(
+                            location_nearby_connections::offline_frame::Version::V1.into(),
+                        ),
                         v1: Some(location_nearby_connections::V1Frame {
                             r#type: Some(
                                 location_nearby_connections::v1_frame::FrameType::AutoResume.into(),
@@ -1117,7 +1125,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                             ..Default::default()
                         }),
                     };
-                    info!("AUTO_RESUME: acking payload {:?} at chunk {received}", ar.pending_payload_id);
+                    info!(
+                        "AUTO_RESUME: acking payload {:?} at chunk {received}",
+                        ar.pending_payload_id
+                    );
                     self.encrypt_and_send(&ack).await?;
                 }
             }
@@ -1823,14 +1834,21 @@ impl InboundRequest<crate::hdl::MigratableStream> {
     async fn drain_prior_channel(&mut self) -> Result<(), anyhow::Error> {
         use location_nearby_connections::bandwidth_upgrade_negotiation_frame::EventType;
 
-        self.encrypt_and_send(&Self::bwu_frame(EventType::LastWriteToPriorChannel, None, None))
-            .await?;
+        self.encrypt_and_send(&Self::bwu_frame(
+            EventType::LastWriteToPriorChannel,
+            None,
+            None,
+        ))
+        .await?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
         let mut peer_last_write = false;
         let mut peer_safe_to_close = false;
         while !(peer_last_write && peer_safe_to_close) {
-            let offline = match tokio::time::timeout_at(deadline, self.read_encrypted_offline_frame())
-                .await
+            let offline = match tokio::time::timeout_at(
+                deadline,
+                self.read_encrypted_offline_frame(),
+            )
+            .await
             {
                 Ok(Ok(f)) => f,
                 Ok(Err(e)) => {
@@ -1973,7 +1991,10 @@ impl InboundRequest<crate::hdl::MigratableStream> {
         // Plaintext CLIENT_INTRODUCTION → CLIENT_INTRODUCTION_ACK on the new socket.
         let intro = read_frame_from(&mut tcp).await?;
         if let Ok(f) = OfflineFrame::decode(&*intro) {
-            debug!("BWU: TCP intro frame type={:?}", f.v1.as_ref().map(|v| v.r#type()));
+            debug!(
+                "BWU: TCP intro frame type={:?}",
+                f.v1.as_ref().map(|v| v.r#type())
+            );
         }
         send_frame_on(&mut tcp, &Self::bwu_ack_frame().encode_to_vec()).await?;
 
@@ -1987,7 +2008,9 @@ impl InboundRequest<crate::hdl::MigratableStream> {
         let disc = OfflineFrame {
             version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
             v1: Some(location_nearby_connections::V1Frame {
-                r#type: Some(location_nearby_connections::v1_frame::FrameType::Disconnection.into()),
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+                ),
                 disconnection: Some(location_nearby_connections::DisconnectionFrame {
                     request_safe_to_disconnect: Some(false),
                     ack_safe_to_disconnect: Some(false),
@@ -2120,7 +2143,9 @@ impl InboundRequest<crate::hdl::MigratableStream> {
         let disc = OfflineFrame {
             version: Some(location_nearby_connections::offline_frame::Version::V1.into()),
             v1: Some(location_nearby_connections::V1Frame {
-                r#type: Some(location_nearby_connections::v1_frame::FrameType::Disconnection.into()),
+                r#type: Some(
+                    location_nearby_connections::v1_frame::FrameType::Disconnection.into(),
+                ),
                 disconnection: Some(location_nearby_connections::DisconnectionFrame {
                     request_safe_to_disconnect: Some(false),
                     ack_safe_to_disconnect: Some(false),

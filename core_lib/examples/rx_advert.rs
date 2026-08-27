@@ -26,11 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let session = bluer::Session::new().await?;
     let adapter = session.default_adapter().await?;
     adapter.set_powered(true).await?;
-    println!(
-        "adapter {} @ {}",
-        adapter.name(),
-        adapter.address().await?
-    );
+    println!("adapter {} @ {}", adapter.name(), adapter.address().await?);
 
     let uuid = Uuid::from_u16(0xFEF3);
     let mut service_data: BTreeMap<Uuid, Vec<u8>> = BTreeMap::new();
@@ -48,7 +44,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         SERVICE_DATA.len()
     );
     let handle = adapter.advertise(adv).await?;
-    println!("ADVERTISING. Open Quick Share -> Send on the Pixel and look for 'Packet Linux Test 01'. Ctrl-C to stop.");
+    println!(
+        "ADVERTISING. Open Quick Share -> Send on the Pixel and look for 'Packet Linux Test 01'. Ctrl-C to stop."
+    );
 
     tokio::signal::ctrl_c().await?;
     drop(handle);

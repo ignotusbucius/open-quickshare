@@ -56,7 +56,9 @@ pub struct JoinGuard {
 
 impl std::fmt::Debug for JoinGuard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JoinGuard").field("ssid", &self.ssid).finish_non_exhaustive()
+        f.debug_struct("JoinGuard")
+            .field("ssid", &self.ssid)
+            .finish_non_exhaustive()
     }
 }
 
@@ -102,8 +104,18 @@ pub async fn join_wifi(ssid: &str, password: &str) -> Result<JoinGuard, anyhow::
         let _ = nmcli(&["device", "wifi", "rescan"]).await;
         tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
         match nmcli(&[
-            "device", "wifi", "connect", ssid, "password", password, "ifname", &ifname, "name",
-            JOIN_CON_NAME, "hidden", "yes",
+            "device",
+            "wifi",
+            "connect",
+            ssid,
+            "password",
+            password,
+            "ifname",
+            &ifname,
+            "name",
+            JOIN_CON_NAME,
+            "hidden",
+            "yes",
         ])
         .await
         {
@@ -118,7 +130,10 @@ pub async fn join_wifi(ssid: &str, password: &str) -> Result<JoinGuard, anyhow::
             }
         }
     }
-    let guard = JoinGuard { ssid: ssid.to_string(), prior };
+    let guard = JoinGuard {
+        ssid: ssid.to_string(),
+        prior,
+    };
     if let Some(e) = last_err {
         drop(guard); // restores the prior connection
         anyhow::bail!("couldn't join '{ssid}': {e}");
@@ -209,7 +224,11 @@ pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
 
     // Operating frequency (MHz) for the credentials; best-effort.
     let mut frequency = 2437;
-    if let Ok(o) = Command::new("iw").args(["dev", &ifname, "info"]).output().await {
+    if let Ok(o) = Command::new("iw")
+        .args(["dev", &ifname, "info"])
+        .output()
+        .await
+    {
         let s = String::from_utf8_lossy(&o.stdout).into_owned();
         if let Some(pos) = s.find(" MHz") {
             let head = &s[..pos];

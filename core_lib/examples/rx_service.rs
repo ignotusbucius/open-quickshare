@@ -41,7 +41,9 @@ async fn main() -> Result<(), anyhow::Error> {
         "RQS receive service running: mDNS + TCP + BLE 0xFEF3 receiver advert. Downloads -> {}",
         download_dir.display()
     );
-    println!("On the phone, open Quick Share -> Send and look for 'Packet Linux RX'. Ctrl-C to stop.");
+    println!(
+        "On the phone, open Quick Share -> Send and look for 'Packet Linux RX'. Ctrl-C to stop."
+    );
 
     // Auto-accept any inbound transfer so a file actually lands.
     let sender = rqs.message_sender.clone();

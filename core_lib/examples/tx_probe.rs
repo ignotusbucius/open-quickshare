@@ -14,7 +14,9 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use bluer::l2cap::{Security, SecurityLevel, Socket, SocketAddr, Stream};
-use bluer::{AdapterEvent, Address, AddressType, DiscoveryFilter, DiscoveryTransport, Uuid, UuidExt};
+use bluer::{
+    AdapterEvent, Address, AddressType, DiscoveryFilter, DiscoveryTransport, Uuid, UuidExt,
+};
 use futures::StreamExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::Instant;
@@ -54,7 +56,11 @@ fn decode(sd: &[u8]) -> Option<Advert> {
             None
         };
         return Some(Advert {
-            form: if sd[0] & 0x10 != 0 { "header (ext bit set)" } else { "header" },
+            form: if sd[0] & 0x10 != 0 {
+                "header (ext bit set)"
+            } else {
+                "header"
+            },
             endpoint_id: None,
             device_type: None,
             name: None,
@@ -92,7 +98,11 @@ fn decode(sd: &[u8]) -> Option<Advert> {
     let mut name = None;
     let mut bt_mac = None;
     let mut visible = None;
-    let body_ok = if fast { data.len() >= 6 } else { data.len() >= 9 && data[1..4] == SVC_HASH };
+    let body_ok = if fast {
+        data.len() >= 6
+    } else {
+        data.len() >= 9 && data[1..4] == SVC_HASH
+    };
     if body_ok {
         let eid_at = if fast { 1 } else { 4 };
         endpoint_id = Some(String::from_utf8_lossy(&data[eid_at..eid_at + 4]).into_owned());
@@ -133,7 +143,11 @@ fn decode(sd: &[u8]) -> Option<Advert> {
     }
 
     Some(Advert {
-        form: if fast { "fast (background beacon, contacts-only)" } else { "full" },
+        form: if fast {
+            "fast (background beacon, contacts-only)"
+        } else {
+            "full"
+        },
         visible,
         endpoint_id,
         device_type,
@@ -170,7 +184,11 @@ fn intro_frame() -> Vec<u8> {
     frame
 }
 
-async fn read_exact_lo(stream: &mut Stream, leftover: &mut Vec<u8>, buf: &mut [u8]) -> anyhow::Result<()> {
+async fn read_exact_lo(
+    stream: &mut Stream,
+    leftover: &mut Vec<u8>,
+    buf: &mut [u8],
+) -> anyhow::Result<()> {
     let n = leftover.len().min(buf.len());
     if n > 0 {
         buf[..n].copy_from_slice(&leftover[..n]);
@@ -183,7 +201,10 @@ async fn read_exact_lo(stream: &mut Stream, leftover: &mut Vec<u8>, buf: &mut [u
 }
 
 /// One [u32 len][payload] frame, or None on clean EOF.
-async fn read_frame(stream: &mut Stream, leftover: &mut Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
+async fn read_frame(
+    stream: &mut Stream,
+    leftover: &mut Vec<u8>,
+) -> anyhow::Result<Option<Vec<u8>>> {
     let mut len_bytes = [0u8; 4];
     match read_exact_lo(stream, leftover, &mut len_bytes).await {
         Ok(()) => {}
@@ -198,7 +219,10 @@ async fn read_frame(stream: &mut Stream, leftover: &mut Vec<u8>) -> anyhow::Resu
     }
     let len = u32::from_be_bytes(len_bytes) as usize;
     if len == 0 || len > 1 << 20 {
-        anyhow::bail!("implausible frame length {len} (raw {})", hex::encode(len_bytes));
+        anyhow::bail!(
+            "implausible frame length {len} (raw {})",
+            hex::encode(len_bytes)
+        );
     }
     let mut msg = vec![0u8; len];
     read_exact_lo(stream, leftover, &mut msg).await?;
@@ -265,15 +289,23 @@ async fn main() -> anyhow::Result<()> {
             _ = tokio::time::sleep_until(deadline) => break,
             ev = events.next() => match ev { Some(ev) => ev, None => break },
         };
-        let AdapterEvent::DeviceAdded(addr) = ev else { continue };
+        let AdapterEvent::DeviceAdded(addr) = ev else {
+            continue;
+        };
         if let Some(t) = target {
             if addr != t {
                 continue;
             }
         }
-        let Ok(dev) = adapter.device(addr) else { continue };
-        let Ok(Some(sd)) = dev.service_data().await else { continue };
-        let Some(bytes) = sd.get(&Uuid::from_u16(0xFEF3)) else { continue };
+        let Ok(dev) = adapter.device(addr) else {
+            continue;
+        };
+        let Ok(Some(sd)) = dev.service_data().await else {
+            continue;
+        };
+        let Some(bytes) = sd.get(&Uuid::from_u16(0xFEF3)) else {
+            continue;
+        };
         if !seen.insert((addr, bytes.clone())) {
             continue;
         }
@@ -289,8 +321,16 @@ async fn main() -> anyhow::Result<()> {
             Some(adv) => {
                 println!("  decoded: {adv:?}");
                 match adv.psm {
-                    Some(psm) => found = Some(Found { addr, addr_type, psm }),
-                    None => println!("  -> no PSM in this advertisement (would need a GATT slot-0 read)"),
+                    Some(psm) => {
+                        found = Some(Found {
+                            addr,
+                            addr_type,
+                            psm,
+                        })
+                    }
+                    None => println!(
+                        "  -> no PSM in this advertisement (would need a GATT slot-0 read)"
+                    ),
                 }
             }
             None => println!("  -> unrecognised layout"),
@@ -305,10 +345,16 @@ async fn main() -> anyhow::Result<()> {
     // Let BlueZ wind the scan down before we ask for a connection.
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    println!("\nconnecting LE CoC to {} ({:?}) psm {} ...", f.addr, f.addr_type, f.psm);
+    println!(
+        "\nconnecting LE CoC to {} ({:?}) psm {} ...",
+        f.addr, f.addr_type, f.psm
+    );
     let socket = Socket::<Stream>::new_stream()?;
     // Android accepts insecure (unbonded) CoC; asking for more would fail.
-    socket.set_security(Security { level: SecurityLevel::Low, key_size: 0 })?;
+    socket.set_security(Security {
+        level: SecurityLevel::Low,
+        key_size: 0,
+    })?;
     socket.set_recv_mtu(4096)?;
     socket.bind(SocketAddr::new(local, AddressType::LePublic, 0))?;
     let t0 = Instant::now();
@@ -355,7 +401,11 @@ async fn main() -> anyhow::Result<()> {
                 None => { println!("NO-GO: phone closed during command handshake"); return Ok(()); }
             }
         };
-        println!("  rx frame {}  [{}]", hex::encode(&msg[..msg.len().min(48)]), describe(&msg));
+        println!(
+            "  rx frame {}  [{}]",
+            hex::encode(&msg[..msg.len().min(48)]),
+            describe(&msg)
+        );
         if msg == [CMD_RESPONSE_DATA_CONNECTION_READY] {
             ready = true;
         }
@@ -375,7 +425,11 @@ async fn main() -> anyhow::Result<()> {
                 Err(e) => { println!("  read error: {e}"); break; }
             }
         };
-        println!("  rx frame {}  [{}]", hex::encode(&msg[..msg.len().min(64)]), describe(&msg));
+        println!(
+            "  rx frame {}  [{}]",
+            hex::encode(&msg[..msg.len().min(64)]),
+            describe(&msg)
+        );
     }
 
     println!(

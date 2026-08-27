@@ -2,7 +2,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
 use anyhow::anyhow;
-use btleplug::api::{AddressType, Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter};
+use btleplug::api::{
+    AddressType, Central, CentralEvent, Manager as _, Peripheral as _, ScanFilter,
+};
 use btleplug::platform::{Adapter, Manager};
 use futures::stream::StreamExt;
 use tokio::sync::broadcast::Sender;

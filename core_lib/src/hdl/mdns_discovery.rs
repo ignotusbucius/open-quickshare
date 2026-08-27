@@ -5,8 +5,8 @@ use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
-use crate::utils::{is_not_self_ip, parse_mdns_endpoint_info};
 use crate::DeviceType;
+use crate::utils::{is_not_self_ip, parse_mdns_endpoint_info};
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct EndpointInfo {

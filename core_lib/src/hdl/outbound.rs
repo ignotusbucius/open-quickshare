@@ -990,7 +990,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                             if let Some(w) = upi.and_then(|u| u.wifi_lan_socket.as_ref()) {
                                 let ipb = w.ip_address();
                                 if ipb.len() == 4 {
-                                    let ip = std::net::Ipv4Addr::new(ipb[0], ipb[1], ipb[2], ipb[3]);
+                                    let ip =
+                                        std::net::Ipv4Addr::new(ipb[0], ipb[1], ipb[2], ipb[3]);
                                     break (ip, w.wifi_port() as u16);
                                 }
                             }
@@ -1003,26 +1004,47 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                             // connect to its gateway.
                             let creds = upi
                                 .and_then(|u| u.wifi_direct_credentials.as_ref())
-                                .map(|c| (c.ssid().to_owned(), c.password().to_owned(), c.gateway().to_owned(), c.port(), c.frequency()))
+                                .map(|c| {
+                                    (
+                                        c.ssid().to_owned(),
+                                        c.password().to_owned(),
+                                        c.gateway().to_owned(),
+                                        c.port(),
+                                        c.frequency(),
+                                    )
+                                })
                                 .or_else(|| {
-                                    upi.and_then(|u| u.wifi_hotspot_credentials.as_ref()).map(|c| {
-                                        (c.ssid().to_owned(), c.password().to_owned(), c.gateway().to_owned(), c.port(), c.frequency())
-                                    })
+                                    upi.and_then(|u| u.wifi_hotspot_credentials.as_ref())
+                                        .map(|c| {
+                                            (
+                                                c.ssid().to_owned(),
+                                                c.password().to_owned(),
+                                                c.gateway().to_owned(),
+                                                c.port(),
+                                                c.frequency(),
+                                            )
+                                        })
                                 });
                             let Some((ssid, password, gateway, port, freq)) = creds else {
-                                info!("BWU(send): {medium:?} offer carried no credentials; staying on BLE");
+                                info!(
+                                    "BWU(send): {medium:?} offer carried no credentials; staying on BLE"
+                                );
                                 return Ok(false);
                             };
                             info!(
                                 "BWU(send): phone hosts {medium:?} '{ssid}' (gateway {gateway}:{port}, freq {freq}); joining"
                             );
                             #[cfg(all(feature = "experimental", target_os = "linux"))]
-                            return self.join_and_upgrade(&ssid, &password, &gateway, port as u16).await;
+                            return self
+                                .join_and_upgrade(&ssid, &password, &gateway, port as u16)
+                                .await;
                             #[cfg(not(all(feature = "experimental", target_os = "linux")))]
                             return Ok(false);
                         }
                         other => {
-                            info!("BWU(send): phone offered unsupported medium {other:?}; staying on BLE");
+                            info!(
+                                "BWU(send): phone offered unsupported medium {other:?}; staying on BLE"
+                            );
                             return Ok(false);
                         }
                     }
@@ -1059,16 +1081,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         };
 
         info!("BWU(send): phone offered WIFI_LAN at {ip}:{port}; connecting");
-        let tcp =
-            match tokio::time::timeout(Duration::from_secs(8), tokio::net::TcpStream::connect((ip, port)))
-                .await
-            {
-                Ok(Ok(s)) => s,
-                _ => {
-                    warn!("BWU(send): couldn't reach the phone's Wi-Fi socket; staying on BLE");
-                    return Ok(false);
-                }
-            };
+        let tcp = match tokio::time::timeout(
+            Duration::from_secs(8),
+            tokio::net::TcpStream::connect((ip, port)),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            _ => {
+                warn!("BWU(send): couldn't reach the phone's Wi-Fi socket; staying on BLE");
+                return Ok(false);
+            }
+        };
 
         self.finish_upgrade_over(tcp).await
     }
@@ -1145,8 +1169,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
 
         // Drain the BLE channel: our LAST_WRITE, then respond to the phone's
         // control frames until it is safe to close the prior channel.
-        self.encrypt_and_send(&Self::bwu_frame(EventType::LastWriteToPriorChannel, None, None))
-            .await?;
+        self.encrypt_and_send(&Self::bwu_frame(
+            EventType::LastWriteToPriorChannel,
+            None,
+            None,
+        ))
+        .await?;
         for _ in 0..16 {
             let offline = match tokio::time::timeout(
                 Duration::from_secs(5),
@@ -1165,7 +1193,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             match event {
                 Some(EventType::LastWriteToPriorChannel) => {
                     let _ = self
-                        .encrypt_and_send(&Self::bwu_frame(EventType::SafeToClosePriorChannel, None, None))
+                        .encrypt_and_send(&Self::bwu_frame(
+                            EventType::SafeToClosePriorChannel,
+                            None,
+                            None,
+                        ))
                         .await;
                 }
                 Some(EventType::SafeToClosePriorChannel) => break,
@@ -1195,7 +1227,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             EventType, UpgradePathInfo,
         };
 
-        let medium = if wifi_direct { UpMedium::WifiDirect } else { UpMedium::WifiHotspot };
+        let medium = if wifi_direct {
+            UpMedium::WifiDirect
+        } else {
+            UpMedium::WifiHotspot
+        };
         let guard = match crate::hdl::start_hotspot().await {
             Ok(g) => g,
             Err(e) => {
@@ -1205,7 +1241,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                     ..Default::default()
                 };
                 let _ = self
-                    .encrypt_and_send(&Self::bwu_frame(EventType::UpgradeFailure, Some(failure), None))
+                    .encrypt_and_send(&Self::bwu_frame(
+                        EventType::UpgradeFailure,
+                        Some(failure),
+                        None,
+                    ))
                     .await;
                 return Ok(false);
             }
@@ -1240,8 +1280,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 frequency: Some(guard.frequency),
             });
         }
-        self.encrypt_and_send(&Self::bwu_frame(EventType::UpgradePathAvailable, Some(info), None))
-            .await?;
+        self.encrypt_and_send(&Self::bwu_frame(
+            EventType::UpgradePathAvailable,
+            Some(info),
+            None,
+        ))
+        .await?;
 
         // The phone enables its Wi-Fi radio, joins our network, gets DHCP, then
         // connects — allow generously, while staying responsive on BLE.
@@ -1287,8 +1331,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         send_plain_frame(&mut tcp, &Self::bwu_ack_frame().encode_to_vec()).await?;
 
         // Drain the BLE channel, then swap the socket to the hosted TCP link.
-        self.encrypt_and_send(&Self::bwu_frame(EventType::LastWriteToPriorChannel, None, None))
-            .await?;
+        self.encrypt_and_send(&Self::bwu_frame(
+            EventType::LastWriteToPriorChannel,
+            None,
+            None,
+        ))
+        .await?;
         for _ in 0..16 {
             let offline = match tokio::time::timeout(
                 Duration::from_secs(5),
@@ -1307,7 +1355,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             match event {
                 Some(EventType::LastWriteToPriorChannel) => {
                     let _ = self
-                        .encrypt_and_send(&Self::bwu_frame(EventType::SafeToClosePriorChannel, None, None))
+                        .encrypt_and_send(&Self::bwu_frame(
+                            EventType::SafeToClosePriorChannel,
+                            None,
+                            None,
+                        ))
                         .await;
                 }
                 Some(EventType::SafeToClosePriorChannel) => break,
@@ -1370,7 +1422,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                             "Payload {total} bytes is too large to send over Bluetooth; \
                              put both devices on the same Wi-Fi and send over Wi-Fi instead"
                         );
-                        self.update_state(|e| e.state = TransferState::Cancelled, true).await;
+                        self.update_state(|e| e.state = TransferState::Cancelled, true)
+                            .await;
                         self.disconnection().await?;
                         return Err(anyhow!(crate::errors::AppError::NotAnError));
                     }
@@ -1527,12 +1580,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
 							}),
 						};
 
-                        tokio::time::timeout(
-                            CHUNK_WRITE_TIMEOUT,
-                            self.encrypt_and_send(&wrapper),
-                        )
-                        .await
-                        .map_err(|_| anyhow!("chunk write stalled (peer stopped reading)"))??;
+                        tokio::time::timeout(CHUNK_WRITE_TIMEOUT, self.encrypt_and_send(&wrapper))
+                            .await
+                            .map_err(|_| anyhow!("chunk write stalled (peer stopped reading)"))??;
                         self.update_state(
                             |e| {
                                 if let Some(mu) = e.transferred_files.get_mut(&current) {
@@ -1665,7 +1715,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                     continue;
                 }
                 let mut body = vec![0u8; len];
-                if stream_read_exact(&mut self.socket, &mut body).await.is_err() {
+                if stream_read_exact(&mut self.socket, &mut body)
+                    .await
+                    .is_err()
+                {
                     break;
                 }
                 // Discard; keep draining until the peer closes or grace elapses.

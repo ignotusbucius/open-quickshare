@@ -45,7 +45,17 @@ const SOCKET_CTRL_PACKET_ACK: u8 = 3;
 /// `08 01` type=INTRODUCTION, `12 len` introduction submessage,
 /// `0a 03 fc9f5e` service id hash, `10 02` socket version 2.
 pub(crate) fn build_intro_frame() -> Vec<u8> {
-    let mut msg = vec![0u8, 0, 0, 0x08, SOCKET_CTRL_INTRODUCTION, 0x12, 0x07, 0x0a, 0x03];
+    let mut msg = vec![
+        0u8,
+        0,
+        0,
+        0x08,
+        SOCKET_CTRL_INTRODUCTION,
+        0x12,
+        0x07,
+        0x0a,
+        0x03,
+    ];
     msg.extend_from_slice(&SVC_HASH);
     msg.extend_from_slice(&[0x10, 0x02]);
     let mut frame = Vec::with_capacity(4 + msg.len());
@@ -68,7 +78,17 @@ pub(crate) fn build_ack_frame(acked: usize) -> Vec<u8> {
         }
     }
     let sub_len = 5 + 1 + varint.len();
-    let mut msg = vec![0u8, 0, 0, 0x08, SOCKET_CTRL_PACKET_ACK, 0x22, sub_len as u8, 0x0a, 0x03];
+    let mut msg = vec![
+        0u8,
+        0,
+        0,
+        0x08,
+        SOCKET_CTRL_PACKET_ACK,
+        0x22,
+        sub_len as u8,
+        0x0a,
+        0x03,
+    ];
     msg.extend_from_slice(&SVC_HASH);
     msg.push(0x10);
     msg.extend_from_slice(&varint);
@@ -111,7 +131,10 @@ impl L2capServer {
         let socket = Socket::<Stream>::new_stream()?;
         // Android connects with an *insecure* L2CAP channel (no bonding), so
         // requiring encryption here would reject every phone.
-        socket.set_security(Security { level: SecurityLevel::Low, key_size: 0 })?;
+        socket.set_security(Security {
+            level: SecurityLevel::Low,
+            key_size: 0,
+        })?;
         socket.set_recv_mtu(RECV_MTU)?;
         socket.bind(SocketAddr::new(
             adapter.address().await?,
@@ -328,7 +351,11 @@ async fn serve_weave_messages(
                 continue;
             }
             if msg[..3] == [0, 0, 0] {
-                let ctrl = if msg.len() >= 5 && msg[3] == 0x08 { msg[4] } else { 0 };
+                let ctrl = if msg.len() >= 5 && msg[3] == 0x08 {
+                    msg[4]
+                } else {
+                    0
+                };
                 match ctrl {
                     SOCKET_CTRL_INTRODUCTION => debug!("{INNER_NAME}: INTRODUCTION"),
                     SOCKET_CTRL_DISCONNECTION => {
@@ -473,8 +500,12 @@ async fn serve_commands(
                         "{INNER_NAME}: advertisement requested for unknown service {}",
                         hex::encode(hash)
                     );
-                    send_packet(&mut stream, length_prefixed, &[CMD_RESPONSE_SERVICE_ID_NOT_FOUND])
-                        .await?;
+                    send_packet(
+                        &mut stream,
+                        length_prefixed,
+                        &[CMD_RESPONSE_SERVICE_ID_NOT_FOUND],
+                    )
+                    .await?;
                 }
             }
             CMD_REQUEST_ADVERTISEMENT_FINISH => {
@@ -482,10 +513,17 @@ async fn serve_commands(
             }
             CMD_REQUEST_DATA_CONNECTION => {
                 info!("{INNER_NAME}: data connection requested; bridging to inbound");
-                send_packet(&mut stream, length_prefixed, &[CMD_RESPONSE_DATA_CONNECTION_READY])
-                    .await?;
+                send_packet(
+                    &mut stream,
+                    length_prefixed,
+                    &[CMD_RESPONSE_DATA_CONNECTION_READY],
+                )
+                .await?;
                 if !leftover.is_empty() {
-                    anyhow::bail!("unexpected {} buffered bytes at data-connection start", leftover.len());
+                    anyhow::bail!(
+                        "unexpected {} buffered bytes at data-connection start",
+                        leftover.len()
+                    );
                 }
                 run_inbound(
                     crate::hdl::MigratableStream::L2cap(stream),

@@ -255,12 +255,24 @@ fn murmur3_x64_128_low(data: &[u8]) -> u64 {
     let n = t.len();
     let mut k1: u64 = 0;
     let mut k2: u64 = 0;
-    if n >= 15 { k2 ^= (t[14] as u64) << 48; }
-    if n >= 14 { k2 ^= (t[13] as u64) << 40; }
-    if n >= 13 { k2 ^= (t[12] as u64) << 32; }
-    if n >= 12 { k2 ^= (t[11] as u64) << 24; }
-    if n >= 11 { k2 ^= (t[10] as u64) << 16; }
-    if n >= 10 { k2 ^= (t[9] as u64) << 8; }
+    if n >= 15 {
+        k2 ^= (t[14] as u64) << 48;
+    }
+    if n >= 14 {
+        k2 ^= (t[13] as u64) << 40;
+    }
+    if n >= 13 {
+        k2 ^= (t[12] as u64) << 32;
+    }
+    if n >= 12 {
+        k2 ^= (t[11] as u64) << 24;
+    }
+    if n >= 11 {
+        k2 ^= (t[10] as u64) << 16;
+    }
+    if n >= 10 {
+        k2 ^= (t[9] as u64) << 8;
+    }
     if n >= 9 {
         k2 ^= t[8] as u64;
         k2 = k2.wrapping_mul(C2);
@@ -268,13 +280,27 @@ fn murmur3_x64_128_low(data: &[u8]) -> u64 {
         k2 = k2.wrapping_mul(C1);
         h2 ^= k2;
     }
-    if n >= 8 { k1 ^= (t[7] as u64) << 56; }
-    if n >= 7 { k1 ^= (t[6] as u64) << 48; }
-    if n >= 6 { k1 ^= (t[5] as u64) << 40; }
-    if n >= 5 { k1 ^= (t[4] as u64) << 32; }
-    if n >= 4 { k1 ^= (t[3] as u64) << 24; }
-    if n >= 3 { k1 ^= (t[2] as u64) << 16; }
-    if n >= 2 { k1 ^= (t[1] as u64) << 8; }
+    if n >= 8 {
+        k1 ^= (t[7] as u64) << 56;
+    }
+    if n >= 7 {
+        k1 ^= (t[6] as u64) << 48;
+    }
+    if n >= 6 {
+        k1 ^= (t[5] as u64) << 40;
+    }
+    if n >= 5 {
+        k1 ^= (t[4] as u64) << 32;
+    }
+    if n >= 4 {
+        k1 ^= (t[3] as u64) << 24;
+    }
+    if n >= 3 {
+        k1 ^= (t[2] as u64) << 16;
+    }
+    if n >= 2 {
+        k1 ^= (t[1] as u64) << 8;
+    }
     if n >= 1 {
         k1 ^= t[0] as u64;
         k1 = k1.wrapping_mul(C1);
@@ -425,12 +451,24 @@ impl ReceiverAdvertiser {
             if mode_var.eq_ignore_ascii_case("full") {
                 ("full", vec![("full", full_advert.clone())])
             } else if mode_var.eq_ignore_ascii_case("header") {
-                ("header", vec![("header", build_advertisement_header(&full_advert, false, l2cap_psm))])
+                (
+                    "header",
+                    vec![(
+                        "header",
+                        build_advertisement_header(&full_advert, false, l2cap_psm),
+                    )],
+                )
             } else {
-                ("dual", vec![
-                    ("full", full_advert.clone()),
-                    ("header", build_advertisement_header(&full_advert, true, l2cap_psm)),
-                ])
+                (
+                    "dual",
+                    vec![
+                        ("full", full_advert.clone()),
+                        (
+                            "header",
+                            build_advertisement_header(&full_advert, true, l2cap_psm),
+                        ),
+                    ],
+                )
             };
 
         Ok(Self {
@@ -595,13 +633,17 @@ impl ReceiverAdvertiser {
             }
         }
         if handles.is_empty() {
-            return Err(anyhow::anyhow!("no advertising instance could be registered"));
+            return Err(anyhow::anyhow!(
+                "no advertising instance could be registered"
+            ));
         }
         Ok(handles)
     }
 
-
-    async fn register(&self, data: &[u8]) -> Result<bluer::adv::AdvertisementHandle, anyhow::Error> {
+    async fn register(
+        &self,
+        data: &[u8],
+    ) -> Result<bluer::adv::AdvertisementHandle, anyhow::Error> {
         let uuid = Uuid::from_u16(QS_SERVICE_UUID);
         let build = |fast: bool| Advertisement {
             // Connectable, matching how the phone advertises as a receiver.
@@ -645,7 +687,6 @@ impl ReceiverAdvertiser {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -697,7 +738,10 @@ mod tests {
             let contained = bloom_positions(NEARBY_SERVICE_ID, nbits)
                 .iter()
                 .all(|&p| bloom[p / 8] & (1 << (p % 8)) != 0);
-            assert!(contained, "bloom filter dropped the service id: {bloom:02x?}");
+            assert!(
+                contained,
+                "bloom filter dropped the service id: {bloom:02x?}"
+            );
         }
     }
 

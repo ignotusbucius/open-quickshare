@@ -1,5 +1,5 @@
+use crate::dto::{to_lib_message, FrontChannelMessage};
 use crate::AppState;
-use crate::dto::{FrontChannelMessage, to_lib_message};
 
 #[tauri::command]
 pub fn send_to_rs(

@@ -6,10 +6,10 @@
 //! (`{ id, direction, action, rtype, state, meta }`). These DTOs reproduce that
 //! flat shape and convert to/from the library's types, so the frontend is
 //! unchanged while the library keeps its richer model.
-use rqs_lib::DeviceType;
-use rqs_lib::TransferState;
 use rqs_lib::channel::{ChannelMessage, Message, MessageClient, TransferAction, TransferKind};
 use rqs_lib::hdl::info::{TransferMetadata, TransferPayload};
+use rqs_lib::DeviceType;
+use rqs_lib::TransferState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]

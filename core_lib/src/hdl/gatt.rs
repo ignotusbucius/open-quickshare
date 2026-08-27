@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bluer::gatt::local::{
-    Application, Characteristic, CharacteristicNotify, CharacteristicNotifyMethod,
-    CharacteristicNotifier, CharacteristicRead, CharacteristicWrite, CharacteristicWriteMethod,
+    Application, Characteristic, CharacteristicNotifier, CharacteristicNotify,
+    CharacteristicNotifyMethod, CharacteristicRead, CharacteristicWrite, CharacteristicWriteMethod,
     Service,
 };
 use bluer::{Adapter, Address, Uuid, UuidExt};
@@ -150,7 +150,10 @@ impl ReceiverGattServer {
                                 let pending = slot0_pending.clone();
                                 Box::pin(async move {
                                     let addr = req.device_address;
-                                    debug!("{INNER_NAME}: slot0 advertisement read by {addr} ({} bytes)", advert.len());
+                                    debug!(
+                                        "{INNER_NAME}: slot0 advertisement read by {addr} ({} bytes)",
+                                        advert.len()
+                                    );
                                     // A slot-0 fetch is a *connection*, and it consumes
                                     // the connectable advertisement exactly like a weave
                                     // session's connection does. In header mode every
@@ -265,7 +268,9 @@ async fn weave_session(
             guard.ctk.cancel();
         }
         if Instant::now() >= deadline {
-            warn!("{INNER_NAME}: weave: the previous session didn't release the socket, ignoring this one");
+            warn!(
+                "{INNER_NAME}: weave: the previous session didn't release the socket, ignoring this one"
+            );
             return;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -312,7 +317,9 @@ pub(crate) async fn cycle_advert_when_peer_gone(adapter: Arc<Adapter>, peer: Opt
                     break;
                 }
                 if Instant::now() >= deadline {
-                    debug!("{INNER_NAME}: peer {addr} still connected after {PEER_GONE_WAIT:?}; cycling the advertisement anyway");
+                    debug!(
+                        "{INNER_NAME}: peer {addr} still connected after {PEER_GONE_WAIT:?}; cycling the advertisement anyway"
+                    );
                     break;
                 }
                 tokio::time::sleep(PEER_GONE_POLL).await;

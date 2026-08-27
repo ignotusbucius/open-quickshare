@@ -107,6 +107,10 @@ const BLE_SEND_MAX_BYTES: i64 = 1024 * 1024;
 /// upgrade path before falling back to sending over BLE. When it comes, the
 /// offer arrives within a few hundred ms, so this only bounds the give-up time.
 const BWU_OFFER_TIMEOUT: Duration = Duration::from_secs(6);
+/// How long to wait for the phone's retry offer after declining its first
+/// Wi-Fi Direct/hotspot offer in favour of a possible WIFI_LAN one (Nearby's
+/// BWU manager retries a failed upgrade after a short backoff).
+const BWU_RETRY_WAIT: Duration = Duration::from_secs(15);
 /// A single chunk write that blocks this long means the peer stopped reading;
 /// abort cleanly instead of hanging the transfer (and the UI).
 const CHUNK_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
@@ -131,6 +135,10 @@ pub struct OutboundRequest<S = TcpStream> {
     /// A BandwidthUpgradeNegotiation frame that arrived while the state machine
     /// was mid-handshake; consumed by the upgrade wait after consent.
     pending_bwu: Option<OfflineFrame>,
+    /// Set once a Wi-Fi Direct/hotspot offer has been declined to nudge the
+    /// phone into re-evaluating (the LAN-preference dance in
+    /// [`Self::try_wifi_upgrade_client`]); the next offer is taken as-is.
+    bwu_declined_direct: bool,
     /// Keeps a hotspot we host for a bandwidth upgrade alive for the length of
     /// the transfer; torn down (and Wi-Fi restored) on drop.
     #[cfg(all(feature = "experimental", target_os = "linux"))]
@@ -180,6 +188,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             payload,
             mediums: vec![Medium::WifiLan.into()],
             pending_bwu: None,
+            bwu_declined_direct: false,
             #[cfg(all(feature = "experimental", target_os = "linux"))]
             hotspot_guard: None,
             #[cfg(all(feature = "experimental", target_os = "linux"))]
@@ -956,7 +965,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         // Wait for the phone's move: an UPGRADE_PATH_AVAILABLE (WIFI_LAN — same
         // LAN, we connect to it) or an UPGRADE_PATH_REQUEST (no shared LAN —
         // the phone asks US to host; the Quick Share for Windows path).
-        let deadline = tokio::time::Instant::now() + BWU_OFFER_TIMEOUT;
+        let mut deadline = tokio::time::Instant::now() + BWU_OFFER_TIMEOUT;
         let (ip, port) = loop {
             let offline = if let Some(stashed) = self.pending_bwu.take() {
                 stashed
@@ -999,6 +1008,41 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                             return Ok(false);
                         }
                         Some(UpMedium::WifiDirect) | Some(UpMedium::WifiHotspot) => {
+                            // LAN-preference dance: a phone sitting on its
+                            // receive screen drops off Wi-Fi for discovery and
+                            // only rejoins after the connection lands, so its
+                            // FIRST offer says Wi-Fi Direct even when both
+                            // devices share a network. Declining one offer
+                            // makes the phone's BWU manager retry a few
+                            // seconds later with Wi-Fi back up: same LAN → the
+                            // retry offers WIFI_LAN (no need to drop this
+                            // machine off its own network); genuinely no
+                            // shared network → Direct again, taken as-is.
+                            // `PACKET_BWU_LAN_PREF=off` disables the dance.
+                            if !self.bwu_declined_direct
+                                && crate::utils::local_ipv4().is_some()
+                                && !std::env::var("PACKET_BWU_LAN_PREF")
+                                    .map(|v| v.eq_ignore_ascii_case("off"))
+                                    .unwrap_or(false)
+                            {
+                                self.bwu_declined_direct = true;
+                                info!(
+                                    "BWU(send): declining the first {medium:?} offer in case the phone re-offers WIFI_LAN now that its Wi-Fi is back"
+                                );
+                                let failure = location_nearby_connections::bandwidth_upgrade_negotiation_frame::UpgradePathInfo {
+                                    medium: upi.and_then(|u| u.medium),
+                                    ..Default::default()
+                                };
+                                let _ = self
+                                    .encrypt_and_send(&Self::bwu_frame(
+                                        EventType::UpgradeFailure,
+                                        Some(failure),
+                                        None,
+                                    ))
+                                    .await;
+                                deadline = tokio::time::Instant::now() + BWU_RETRY_WAIT;
+                                continue;
+                            }
                             // The phone hosts its own Wi-Fi Direct group /
                             // hotspot (the no-shared-LAN path): join it and
                             // connect to its gateway.

@@ -1,6 +1,6 @@
 import { Visibility } from '@martichou/core_lib/bindings/Visibility';
 import { TauriVM } from './helper/ParamsHelper';
-import { autostartKey, DisplayedItem, downloadPathKey, numberToVisibility, realcloseKey, startminimizedKey, stateToDisplay, visibilityKey, visibilityToNumber } from './types';
+import { autostartKey, deviceNameKey, DisplayedItem, downloadPathKey, numberToVisibility, realcloseKey, startminimizedKey, stateToDisplay, visibilityKey, visibilityToNumber } from './types';
 import { SendInfo } from '@martichou/core_lib/bindings/SendInfo';
 import { ChannelMessage } from '@martichou/core_lib/bindings/ChannelMessage';
 import { ChannelAction } from '@martichou/core_lib';
@@ -186,6 +186,52 @@ async function getDownloadPath(vm: TauriVM) {
 	vm.downloadPath = await vm.store.get(downloadPathKey) ?? undefined;
 }
 
+async function setDeviceName(vm: TauriVM, name: string) {
+	const trimmed = name.trim();
+	// An empty name resets to the OS hostname.
+	const finalName = trimmed.length ? trimmed : (await vm.invoke('get_hostname') as string);
+
+	await vm.invoke('set_device_name', { name: finalName });
+	await vm.store.set(deviceNameKey, trimmed.length ? trimmed : null);
+	await vm.store.save();
+	vm.hostname = finalName;
+}
+
+async function getDeviceName(vm: TauriVM) {
+	// The lib holds the effective name: the custom one applied at startup, or
+	// the OS hostname when none was set.
+	vm.hostname = await vm.invoke('get_device_name') as string;
+}
+
+export type Theme = 'light' | 'dark' | 'system';
+
+function applyTheme(theme: Theme) {
+	let dark = theme === 'dark';
+	if (theme === 'system') {
+		try {
+			dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+		} catch { /* default light */ }
+	}
+	document.documentElement.classList.toggle('dark', dark);
+}
+
+async function setTheme(vm: TauriVM, theme: Theme) {
+	try {
+		localStorage.setItem('theme', theme);
+	} catch { /* ignore */ }
+	applyTheme(theme);
+	vm.theme = theme;
+}
+
+function getTheme(vm: TauriVM) {
+	let theme: Theme = 'system';
+	try {
+		theme = (localStorage.getItem('theme') as Theme | null) ?? 'system';
+	} catch { /* ignore */ }
+	vm.theme = theme;
+	applyTheme(theme);
+}
+
 async function getLatestVersion(vm: TauriVM) {
 	try {
 		const response = await fetch('https://api.github.com/repos/ignotusbucius/open-quickshare/releases/latest');
@@ -224,6 +270,11 @@ export const utils = {
 	getDownloadPath,
 	getLatestVersion,
 	setStartMinimized,
-	getStartMinimized
+	getStartMinimized,
+	setDeviceName,
+	getDeviceName,
+	setTheme,
+	getTheme,
+	applyTheme
 };
 export type UtilsType = typeof utils;

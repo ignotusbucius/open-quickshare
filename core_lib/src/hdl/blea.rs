@@ -8,10 +8,11 @@ use once_cell::sync::Lazy;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::hdl::{BleScanSuppressor, scanning_suppressed};
+use crate::hdl::{BleScanSuppressor, Visibility, scanning_suppressed};
 
 /// Rings when a connection has consumed the receiver advertisement and the
 /// link is gone, so [`ReceiverAdvertiser`] should put a fresh one on the air.
@@ -460,7 +461,11 @@ impl ReceiverAdvertiser {
     /// session once raced the whole process into a silent lockup.
     const CYCLE_GRACE: Duration = Duration::from_millis(1500);
 
-    pub async fn run(&self, ctk: CancellationToken) -> Result<(), anyhow::Error> {
+    pub async fn run(
+        &self,
+        mut visibility: watch::Receiver<Visibility>,
+        ctk: CancellationToken,
+    ) -> Result<(), anyhow::Error> {
         info!(
             "{RX_INNER_NAME}: advertising QuickShare receiver (0x{QS_SERVICE_UUID:04X}, mode={}, instances=[{}], {}-byte slot-0 advertisement) on adapter {} ({})",
             self.mode,
@@ -475,6 +480,28 @@ impl ReceiverAdvertiser {
         );
 
         loop {
+            // Honour the visibility toggle. While "Hidden from everyone"
+            // (Invisible), keep no advertisement on the air -- the same way
+            // mDNS unregisters -- so the device is genuinely undiscoverable.
+            // Idle here until the user turns visible again (or the tracker is
+            // cancelled). This also covers starting up Invisible: nothing is
+            // advertised until visibility flips.
+            while *visibility.borrow_and_update() == Visibility::Invisible {
+                info!("{RX_INNER_NAME}: visibility is Invisible; advertisement off");
+                tokio::select! {
+                    _ = ctk.cancelled() => {
+                        info!("{RX_INNER_NAME}: tracker cancelled, returning");
+                        return Ok(());
+                    }
+                    changed = visibility.changed() => {
+                        // Err means the sender was dropped (app shutting down).
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
             // Register, retrying failures (some controllers refuse a new
             // connectable set while a previous LE connection is still winding
             // down).
@@ -505,6 +532,15 @@ impl ReceiverAdvertiser {
                     _ = ADV_CYCLE.notified() => {
                         debug!("{RX_INNER_NAME}: advertisement consumed by a connection; cycling");
                         break;
+                    }
+                    changed = visibility.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                        if *visibility.borrow() == Visibility::Invisible {
+                            info!("{RX_INNER_NAME}: visibility -> Invisible; taking the advertisement off the air");
+                            break;
+                        }
                     }
                     _ = tokio::time::sleep(Self::WATCH) => {
                         // Watchdog: instances vanishing under us (a bluetoothd

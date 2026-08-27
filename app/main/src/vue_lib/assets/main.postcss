@@ -220,3 +220,33 @@ body,
 .error circle.bg, .error circle.fg {
     @apply !stroke-red-400
 }
+
+/* --- Dark theme overrides for the hand-rolled (non-utility) pieces --- */
+
+/* SVG icons carry no explicit fill, so let them follow the current text
+   colour -- black on light, near-white on dark -- instead of defaulting to
+   black and vanishing on a dark surface. (circular-progress circles set
+   fill:none above, so they're unaffected.) */
+svg {
+	fill: currentColor;
+}
+
+.dark .status-indicator--success .circle-main {
+	@apply bg-neutral-100
+}
+
+.dark .status-indicator--success .circle-secondary {
+	@apply bg-neutral-100 bg-opacity-10
+}
+
+.dark .status-indicator--success .circle-tertiary {
+	@apply bg-neutral-100 bg-opacity-40
+}
+
+.dark .circular-progress circle.bg {
+	stroke: #3f3f46; /* neutral-700 */
+}
+
+.dark .circular-progress circle.fg {
+	@apply stroke-neutral-100
+}

@@ -29,7 +29,7 @@ function openDownloadPicker() {
 
 <template>
 	<div v-if="vm.settingsOpen" class="absolute z-10 w-full h-full flex justify-center items-center bg-black bg-opacity-25">
-		<div class="bg-white rounded-xl shadow-xl p-4 w-[24rem]">
+		<div class="bg-white dark:bg-neutral-800 rounded-xl shadow-xl p-4 w-[24rem]">
 			<div class="flex flex-row justify-between items-center">
 				<h3 class="font-medium text-xl">
 					Settings
@@ -39,6 +39,28 @@ function openDownloadPicker() {
 				</div>
 			</div>
 			<div class="py-4 flex flex-col">
+				<div class="form-control rounded-xl p-3">
+					<label class="flex flex-col items-start gap-1">
+						<span class="label-text">Device name</span>
+						<input
+							type="text" :value="vm.hostname" placeholder="Device name"
+							@change="(e) => utils.setDeviceName(vm, (e.target as HTMLInputElement).value)"
+							class="w-full bg-transparent border border-gray-500 border-opacity-20 rounded-lg px-2 py-1 text-sm focus:outline-none focus:border-green-400">
+						<span class="text-xs opacity-60">Shown to nearby devices. Applies fully after a restart.</span>
+					</label>
+				</div>
+				<div class="form-control rounded-xl p-3">
+					<span class="label-text mb-2">Appearance</span>
+					<div class="flex flex-row gap-1 bg-gray-500 bg-opacity-10 rounded-lg p-1">
+						<button
+							v-for="opt in (['system', 'light', 'dark'] as const)" :key="opt"
+							@click="utils.setTheme(vm, opt)"
+							class="flex-1 capitalize text-sm rounded-md py-1 transition duration-150 ease-in-out active:scale-95"
+							:class="vm.theme === opt ? 'bg-green-200 text-black' : 'hover:bg-gray-500 hover:bg-opacity-10'">
+							{{ opt }}
+						</button>
+					</div>
+				</div>
 				<div class="form-control hover:bg-gray-500 hover:bg-opacity-10 rounded-xl p-3">
 					<label class="cursor-pointer flex flex-row justify-between items-center" @click="utils.setAutoStart(vm, !vm.autostart)">
 						<span class="label-text">Start on boot</span>

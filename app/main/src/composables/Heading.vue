@@ -22,7 +22,7 @@ const emit = defineEmits(['openSettings']);
 		<div>
 			<div class="flex items-center gap-2">
 				<span class="inline-block w-2.5 h-2.5 rounded-full bg-green-500" />
-				<h1 class="text-sm font-semibold uppercase tracking-wider text-green-700">
+				<h1 class="text-sm font-semibold uppercase tracking-wider text-green-700 dark:text-green-400">
 					Open QuickShare
 				</h1>
 			</div>

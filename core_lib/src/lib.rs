@@ -184,7 +184,11 @@ impl RQS {
         // completes the transfer over the normal Wi-Fi-LAN (mDNS + TCP) path.
         #[cfg(all(feature = "experimental", target_os = "linux"))]
         {
-            if *self.visibility_receiver.borrow() != Visibility::Invisible {
+            // The BLE advertiser is always spawned; it self-gates on the live
+            // visibility watch (off while Invisible, on otherwise) so the
+            // "Hidden from everyone" toggle takes effect immediately and a
+            // start-Invisible session can still become visible without a restart.
+            {
                 let rx_endpoint_id: [u8; 4] = endpoint_id[..4].try_into()?;
                 let rx_device_name = DEVICE_NAME.read().unwrap().clone();
 
@@ -250,6 +254,7 @@ impl RQS {
 
                 // BLE receiver advertisement (0xFEF3).
                 let ctk = ctoken.clone();
+                let adv_vis = self.visibility_receiver.clone();
                 tracker.spawn(async move {
                     match crate::hdl::ReceiverAdvertiser::new(
                         rx_endpoint_id,
@@ -260,7 +265,7 @@ impl RQS {
                     .await
                     {
                         Ok(adv) => {
-                            if let Err(e) = adv.run(ctk).await {
+                            if let Err(e) = adv.run(adv_vis, ctk).await {
                                 error!("ReceiverAdvertiser: {}", e);
                             }
                         }

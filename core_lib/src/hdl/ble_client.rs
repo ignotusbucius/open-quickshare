@@ -551,7 +551,11 @@ async fn bridge(mut stream: Stream, local: tokio::io::DuplexStream, mut leftover
                             frame.extend_from_slice(&((3 + entry.len()) as u32).to_be_bytes());
                             frame.extend_from_slice(&SVC_HASH);
                             frame.extend_from_slice(&entry);
-                            if stream.write_all(&frame).await.is_err() {
+                            if let Err(e) = stream.write_all(&frame).await {
+                                warn!(
+                                    "{INNER_NAME}: L2CAP write of {}-byte frame failed: {e}",
+                                    frame.len()
+                                );
                                 return;
                             }
                         }

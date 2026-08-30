@@ -114,6 +114,16 @@ const BWU_RETRY_WAIT: Duration = Duration::from_secs(15);
 /// A single chunk write that blocks this long means the peer stopped reading;
 /// abort cleanly instead of hanging the transfer (and the UI).
 const CHUNK_WRITE_TIMEOUT: Duration = Duration::from_secs(20);
+/// Payload chunk size over a pure-BLE link. Each file chunk becomes one
+/// length-prefixed frame on the L2CAP socket; a frame larger than the BLE MTU
+/// (~4 KB here) is never delivered/parsed by the phone — it accepts the
+/// transfer, waits for bytes that never arrive, then fails with "Can't
+/// transfer files". Keeping each chunk comfortably under the MTU (leaving room
+/// for the socket tag, protobuf and encryption overhead) lets big files stream
+/// over pure Bluetooth as a sequence of small frames, the way the protocol
+/// intends. Over a high-bandwidth (Wi-Fi/TCP) link we use a big buffer instead.
+const BLE_PAYLOAD_CHUNK: usize = 3 * 1024;
+const WIFI_PAYLOAD_CHUNK: usize = 512 * 1024;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum OutboundPayload {
@@ -1517,6 +1527,15 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 info!("We are sending: {:?}", ids);
                 let mut ids_iter = ids.into_iter();
 
+                // Over pure BLE the socket MTU caps how big a single frame can be
+                // delivered, so stream the payload in small chunks; over Wi-Fi a
+                // large buffer keeps throughput high.
+                let payload_buf_len = if self.socket.is_low_bandwidth() {
+                    BLE_PAYLOAD_CHUNK
+                } else {
+                    WIFI_PAYLOAD_CHUNK
+                };
+
                 // Loop through all files
                 'send_all_files: loop {
                     let current = match ids_iter.next() {
@@ -1606,7 +1625,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                                 break;
                             }
 
-                            let mut buffer = vec![0u8; 512 * 1024];
+                            let mut buffer = vec![0u8; payload_buf_len];
                             let bytes_read = curr_state.file.as_ref().unwrap().read(&mut buffer)?;
 
                             (

@@ -33,7 +33,7 @@ WORK="${WORK:-$HOME/.cache/oqs-interop}"
 PAYLOAD_DIR="$WORK/payloads"
 DL_DIR="$WORK/received"                       # rx_service download target
 REPORT="$WORK/report-$(date +%Y%m%d-%H%M%S).txt"
-RECV_TIMEOUT="${RECV_TIMEOUT:-120}"           # seconds to wait for a phone->PC file
+RECV_TIMEOUT="${RECV_TIMEOUT:-60}"           # seconds to wait for a phone->PC file
 SEND_SCAN="${SEND_SCAN:-1}"                   # tx_send does its own 6x20s scan
 
 BLU=$'\e[1;34m'; GRN=$'\e[1;32m'; RED=$'\e[1;31m'; YEL=$'\e[1;33m'; DIM=$'\e[2m'; RST=$'\e[0m'
@@ -176,9 +176,19 @@ run_send() {
   say "Phone: make sure it is on the Quick Share ${YEL}receive screen (Everyone)${RST}, then it will show an Accept prompt."
   ask "[Enter]=run   s=skip:"; read -r a; [ "$a" = s ] && { record SEND "$transport" "$label" SKIP - "skipped"; return; }
 
-  PACKET_SEND_MEDIUMS="$mediums" RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
-    "$EX_DIR/tx_send" "$file" >"$log" 2>&1
-  local rc=$?
+  # The headless tx_send uses a single-shot BLE dial (no retry ladder like the
+  # app), and the phone's L2CAP PSM rotates, so a fresh scan+dial can miss.
+  # Retry the whole send a couple times on a dial miss before giving up.
+  local rc=1 attempt
+  for attempt in 1 2 3; do
+    PACKET_SEND_MEDIUMS="$mediums" RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
+      "$EX_DIR/tx_send" "$file" >"$log" 2>&1
+    rc=$?
+    grep -q 'final state Finished' "$log" && break
+    grep -qiE 'too large to send over Bluetooth' "$log" && break
+    grep -qiE "couldn't establish a live L2CAP|no receiver found" "$log" || break
+    [ "$attempt" -lt 3 ] && { say "  ${DIM}BLE dial miss (attempt $attempt/3); re-scanning…${RST}"; sleep 3; }
+  done
   local med; med="$(detect_medium "$log")"
 
   if grep -q 'final state Finished' "$log"; then
@@ -208,27 +218,39 @@ run_receive() {
   local rxpid=$!
   sleep 3
   say "Phone: Quick Share → ${YEL}Send${RST} → pick the $label → choose ${YEL}'OQS Interop RX'${RST}."
-  ask "[Enter] once you've started the send on the phone   (or type s to skip):"; read -r a
-  if [ "$a" = s ]; then kill "$rxpid" 2>/dev/null; record RECV "$transport" "$label" SKIP - "skipped"; return; fi
+  ask "[Enter] once you've STARTED the send on the phone   (s=skip):"; read -r a; echo
+  if [ "$a" = s ]; then kill "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null; record RECV "$transport" "$label" SKIP - "skipped"; return; fi
 
-  local waited=0 got=""
+  say "  Waiting for the file — press ${YEL}Enter${RST} anytime to stop waiting early."
+  local waited=0 got="" verdict="" note="" fin=-1
   while [ "$waited" -lt "$RECV_TIMEOUT" ]; do
     got="$(find "$DL_DIR" -type f -size +0c 2>/dev/null | head -1)"
-    [ -n "$got" ] && { sleep 2; break; }   # settle, let it finish writing
-    sleep 2; waited=$((waited+2))
-    printf '\r  waiting for the file… %ss' "$waited"
+    if [ -n "$got" ]; then sleep 2; got="$(find "$DL_DIR" -type f -size +0c 2>/dev/null | head -1)"; verdict=PASS; break; fi
+    # Receiver finished the session but wrote nothing -> fast-fail after a grace
+    # window instead of blocking for the whole timeout.
+    if grep -q 'Transfer finished' "$log"; then
+      [ "$fin" -lt 0 ] && fin="$waited"
+      if [ $((waited - fin)) -ge 8 ]; then verdict=NOFILE; note="receiver reported finished but wrote NO file"; break; fi
+    fi
+    if read -t 2 -N 1 -r _k 2>/dev/null; then verdict=STOP; break; fi
+    waited=$((waited+2)); printf '\r  …%ss  ' "$waited"
   done
   echo
   local med; med="$(detect_medium "$log")"
   kill "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null
 
-  if [ -n "$got" ]; then
-    local rsz; rsz="$(hsize "$got")"
-    ok "received $(basename "$got") ($rsz)  (medium: $med)"
-    record RECV "$transport" "$label" PASS "$med" "$(basename "$got") $rsz"
+  if [ "$verdict" = PASS ] && [ -n "$got" ]; then
+    ok "received $(basename "$got") ($(hsize "$got"))  (medium: $med)"
+    record RECV "$transport" "$label" PASS "$med" "$(basename "$got")"
+  elif [ "$verdict" = NOFILE ]; then
+    bad "$note  (medium seen: $med)"
+    record RECV "$transport" "$label" FAIL "$med" "$note (BLE receive/BWU gap)"
   else
-    bad "no file within ${RECV_TIMEOUT}s. tail:"; tail -4 "$log" | sed 's/^/    /'
-    record RECV "$transport" "$label" FAIL "$med" "timeout ${RECV_TIMEOUT}s"
+    # user stopped early, or timed out — get the phone-side truth
+    bad "nothing saved on the PC."
+    ask "On the phone, did it show the send as DONE? [y/N]:"; read -r ph
+    if [[ "$ph" =~ ^[Yy] ]]; then record RECV "$transport" "$label" FAIL "$med" "phone showed DONE but PC saved nothing"
+    else                         record RECV "$transport" "$label" FAIL "$med" "phone did not complete / not started"; fi
   fi
 }
 

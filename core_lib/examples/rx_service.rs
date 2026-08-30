@@ -48,6 +48,7 @@ async fn main() -> Result<(), anyhow::Error> {
     // Auto-accept any inbound transfer so a file actually lands.
     let sender = rqs.message_sender.clone();
     let mut rx = rqs.message_sender.subscribe();
+    let text_dir = download_dir.clone();
     tokio::spawn(async move {
         while let Ok(cm) = rx.recv().await {
             if let Message::Client(mc) = &cm.msg {
@@ -60,6 +61,30 @@ async fn main() -> Result<(), anyhow::Error> {
                             action: TransferAction::ConsentAccept,
                         },
                     });
+                }
+                // A phone can share TEXT (or a URL) instead of a file; the app
+                // shows it in the UI, but headless we persist it so the
+                // transfer leaves the same evidence a file does.
+                if mc.state == Some(TransferState::Finished) {
+                    if let Some(md) = &mc.metadata {
+                        use rqs_lib::hdl::info::TransferPayload;
+                        match &md.payload {
+                            Some(TransferPayload::Text(t)) | Some(TransferPayload::Url(t)) => {
+                                let ts = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis())
+                                    .unwrap_or(0);
+                                let path = text_dir.join(format!("received-text-{ts}.txt"));
+                                match std::fs::write(&path, t) {
+                                    Ok(_) => {
+                                        info!("TEXT RECEIVED -> saved to {}", path.display())
+                                    }
+                                    Err(e) => error!("TEXT RECEIVED but save failed: {e}"),
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                 }
             }
         }

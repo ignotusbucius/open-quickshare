@@ -157,10 +157,15 @@ start_app() {
 # ---- transport detection from a run log ------------------------------------
 detect_medium() {
   local log="$1"
-  if   grep -qiE 'too large to send over Bluetooth|payload .* too large' "$log"; then echo "REFUSED-too-big"
-  elif grep -qiE 'join.*wi-?fi|WifiDirect|hotspot|group owner' "$log";        then echo "Wi-Fi Direct"
-  elif grep -qiE 'upgrade.*(tcp|wifi|lan)|over Wi-Fi|WIFI_LAN|WifiLan|connect.*ip' "$log"; then echo "Wi-Fi LAN"
-  elif grep -qiE 'stays on BLE|BLE only|no Wi-Fi upgrade|SendingFiles' "$log"; then echo "BLE"
+  # Order matters: match markers of the transport ACTUALLY used, not medium
+  # names merely listed in BWU offer/retry frames.
+  if   grep -qiE 'too large to send over Bluetooth' "$log"; then echo "REFUSED-too-big"
+  elif grep -qE 'upgraded to Wi-Fi-LAN; payload continues over TCP' "$log"; then echo "Wi-Fi LAN"
+  elif grep -qE 'upgraded to.*(hotspot|Wi-Fi Direct)|joined.*(hotspot|group)' "$log"; then echo "Wi-Fi Direct"
+  elif grep -qE "hosting hotspot .* for the sender to join" "$log" && grep -qE 'phone connected over TCP' "$log"; then echo "Wi-Fi Direct (we host)"
+  elif grep -qE 'phone connected over TCP' "$log"; then echo "Wi-Fi LAN"
+  elif grep -qE 'UPGRADE_FAILURE; continuing over BLE|stays on BLE|BLE only, no Wi-Fi upgrade' "$log"; then echo "BLE"
+  elif grep -qE 'SendingFiles|ReceivingFiles' "$log"; then echo "BLE"
   else echo "?"; fi
 }
 
@@ -219,7 +224,7 @@ run_receive() {
   sleep 3
   say "Phone: Quick Share → ${YEL}Send${RST} → pick the $label → choose ${YEL}'OQS Interop RX'${RST}."
   ask "[Enter] once you've STARTED the send on the phone   (s=skip):"; read -r a; echo
-  if [ "$a" = s ]; then kill "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null; record RECV "$transport" "$label" SKIP - "skipped"; return; fi
+  if [ "$a" = s ]; then kill -INT "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null; record RECV "$transport" "$label" SKIP - "skipped"; return; fi
 
   say "  Waiting for the file — press ${YEL}Enter${RST} anytime to stop waiting early."
   local waited=0 got="" verdict="" note="" fin=-1
@@ -237,7 +242,13 @@ run_receive() {
   done
   echo
   local med; med="$(detect_medium "$log")"
-  kill "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null
+  kill -INT "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null
+  # If a hosted-hotspot cell got killed hard, its DIRECT-* connection can
+  # linger and hijack later cells' IPs — tear any leftovers down.
+  local c
+  for c in $(nmcli -t -f NAME connection show --active 2>/dev/null | grep -i '^DIRECT-'); do
+    nmcli connection down "$c" >/dev/null 2>&1
+  done
 
   if [ "$verdict" = PASS ] && [ -n "$got" ]; then
     ok "received $(basename "$got") ($(hsize "$got"))  (medium: $med)"

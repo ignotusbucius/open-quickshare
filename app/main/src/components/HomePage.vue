@@ -281,15 +281,23 @@ export default {
 					const idx = this.requests.findIndex((el) => el.id === cm.id);
 
 					if (cm.state === "Disconnected") {
-						// A drop before SendingFiles on an outbound transfer is the
-						// phone abandoning the handshake — nearly always because its
+						// A drop before SendingFiles on an outbound BLE transfer is the
+						// phone abandoning the handshake — typically because its
 						// unassociated Wi-Fi radio is scanning and starving Bluetooth
 						// (it never even shows a consent prompt). Tag it so the card
-						// can explain instead of shrugging "unexpected".
+						// can explain instead of shrugging "unexpected". A non-BLE id
+						// is a network endpoint; its failures are reachability, not
+						// handshake, so it gets no such tag.
 						const prevState = idx !== -1 ? this.requests.at(idx)?.state : undefined;
-						if (cm.rtype === 'Outbound' && prevState !== 'SendingFiles' && prevState !== 'Finished') {
+						if (cm.rtype === 'Outbound' && cm.id.startsWith('ble://')
+							&& prevState !== 'SendingFiles' && prevState !== 'Finished') {
 							this.handshakeDrops.add(cm.id);
 						}
+						// A Wi-Fi endpoint that failed to connect is a stale mDNS
+						// card (the device left the network) — remove it so it can't
+						// be clicked again; the live BLE card stays.
+						const eidx = this.endpointsInfo.findIndex((e) => e.id === cm.id && !e.ble_addr);
+						if (eidx !== -1) this.endpointsInfo.splice(eidx, 1);
 						this.toDelete.push({
 							id: cm.id,
 							triggered: new Date().getTime()

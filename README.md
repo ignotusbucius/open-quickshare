@@ -189,10 +189,11 @@ Happens when the phone's Wi‑Fi radio is on but **not connected to any network*
 Quick Share receive screen forces the radio on). An unassociated Android phone keeps
 scanning for networks, and Wi‑Fi scanning starves Bluetooth on the phone — the secure
 handshake slows to a crawl and the phone abandons it after ~7 seconds, before it even
-shows a prompt. This hits *any* sender, not just this app. Fixes, best first: connect
-the phone to the same Wi‑Fi as the PC; or leave the phone sitting on the receive screen
-for a minute (scanning backs off), then retry. Receiving **on** the PC is unaffected —
-the phone drives that direction and it works even mid‑scan.
+shows a prompt. This hits *any* sender, not just this app — though how aggressively a
+phone scans varies by device and state, so some phones never show the problem. Fixes,
+best first: connect the phone to the same Wi‑Fi as the PC; or leave the phone sitting
+on the receive screen for a minute (scanning backs off), then retry. Receiving **on**
+the PC is unaffected — the phone drives that direction and it works even mid‑scan.
 
 ### A large transfer says "Too large for Bluetooth — turn on Wi‑Fi"
 

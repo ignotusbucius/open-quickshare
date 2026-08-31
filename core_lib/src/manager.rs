@@ -149,7 +149,19 @@ impl TcpServer {
         }
 
         debug!("{INNER_NAME}: Connecting to: {}", si.addr);
-        let socket = TcpStream::connect(si.addr.clone()).await?;
+        // A stale mDNS endpoint (device left the network) otherwise spins for
+        // the OS's full connect timeout (~40s) with the UI stuck on it.
+        let socket = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            TcpStream::connect(si.addr.clone()),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "connect to {} timed out — the device may have left the network",
+                si.addr
+            )
+        })??;
 
         let mut or = OutboundRequest::new(
             self.endpoint_id,

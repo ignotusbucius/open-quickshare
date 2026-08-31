@@ -43,6 +43,7 @@ export const startminimizedKey = "startminimized";
 export const visibilityKey = "visibility";
 export const downloadPathKey = "download_path";
 export const deviceNameKey = "device_name";
+export const trustedKey = "trusted_devices";
 export const stateToDisplay: Array<Partial<State>> = ["SentUkeyClientInit", "ReceivedPairedKeyResult", "WaitingForUserConsent", "ReceivingFiles", "Disconnected",
 	"Finished", "SentIntroduction", "SendingFiles", "Cancelled", "Rejected"]
 

@@ -31,9 +31,13 @@
 							<p class="mt-4">
 								Wants to share {{ item.files?.join(', ') ?? item.text_description ?? 'some file(s).' }}
 							</p>
+							<label class="flex items-center gap-2 mt-2 text-xs opacity-70 cursor-pointer select-none" @click.stop>
+								<input v-model="alwaysAccept[item.id]" type="checkbox" class="accent-green-500">
+								Always accept from this device
+							</label>
 							<div class="flex flex-row justify-end gap-4 mt-1">
 								<p
-									@click.stop="sendCmd(vm, item.id, 'AcceptTransfer')" class="btn px-3
+									@click.stop="acceptTransfer(item)" class="btn px-3
 									rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
 									Accept
 								</p>
@@ -56,7 +60,9 @@
 								{{ f }}
 							</p>
 							<p v-if="item.total_bytes" class="text-xs opacity-60 mt-1">
-								{{ fmtBytes(item.ack_bytes ?? 0) }} of {{ fmtBytes(item.total_bytes) }}
+								{{ fmtBytes(item.ack_bytes ?? 0) }} of {{ fmtBytes(item.total_bytes) }}<span
+									v-if="rates[item.id] && rates[item.id].speed > 1024"> · {{ fmtBytes(rates[item.id].speed) }}/s · {{
+										Math.max(1, Math.round((item.total_bytes - (item.ack_bytes ?? 0)) / rates[item.id].speed)) }}s left</span>
 							</p>
 							<div class="flex flex-row justify-end gap-4 mt-1">
 								<p
@@ -80,8 +86,13 @@
 								<span v-if="item.files">Saved to </span>{{ item.destination }}
 							</p>
 
-							<!-- If text -->
-							<p v-if="item.text_type" class="!select-text cursor-text overflow-hidden whitespace-nowrap text-ellipsis">
+							<!-- If text: a URL becomes a real hyperlink -->
+							<p v-if="item.text_type === 'Url' && item.text_payload" class="overflow-hidden whitespace-nowrap text-ellipsis">
+								<a
+									class="underline text-green-700 dark:text-green-400 cursor-pointer"
+									@click.stop="openUrl(item.text_payload!)">{{ item.text_payload }}</a>
+							</p>
+							<p v-else-if="item.text_type" class="!select-text cursor-text overflow-hidden whitespace-nowrap text-ellipsis">
 								{{ item.text_payload }}
 							</p>
 
@@ -91,6 +102,12 @@
 									@click.stop="openUrl(item.destination ?? item.text_payload!)"
 									class="btn px-3 rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
 									Open
+								</p>
+								<p
+									v-if="item.files && item.destination"
+									@click.stop="openUrl(dirOf(item.destination))"
+									class="btn px-3 rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
+									Folder
 								</p>
 								<p
 									v-if="item.text_type && item.text_payload" @click.stop="writeToClipboard(item.text_payload)"
@@ -111,6 +128,11 @@
 							</p>
 							<div class="flex flex-row justify-end gap-4 mt-1">
 								<p
+									v-if="canRetry(item)" @click.stop="retrySend(item)" class="btn px-3
+									rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
+									Retry
+								</p>
+								<p
 									@click.stop="removeRequest(vm, item.id)" class="btn px-3
 									rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
 									Clear
@@ -123,6 +145,11 @@
 								Transfer rejected
 							</p>
 							<div class="flex flex-row justify-end gap-4 mt-1">
+								<p
+									v-if="canRetry(item)" @click.stop="retrySend(item)" class="btn px-3
+									rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
+									Retry
+								</p>
 								<p
 									@click.stop="removeRequest(vm, item.id)" class="btn px-3
 									rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
@@ -141,6 +168,11 @@
 								network), or leave it on the receive screen for a minute, then retry.
 							</p>
 							<div class="flex flex-row justify-end gap-4 mt-1">
+								<p
+									v-if="canRetry(item)" @click.stop="retrySend(item)" class="btn px-3
+									rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
+									Retry
+								</p>
 								<p
 									@click.stop="removeRequest(vm, item.id)" class="btn px-3
 									rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
@@ -162,7 +194,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getStore } from "@tauri-apps/plugin-store";
-import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { disable, enable } from '@tauri-apps/plugin-autostart';
 import { open as tauriDialog } from '@tauri-apps/plugin-dialog';
 import { open } from '@tauri-apps/plugin-shell';
@@ -173,7 +205,7 @@ import { EndpointInfo } from '@martichou/core_lib/bindings/EndpointInfo';
 import { OutboundPayload } from '@martichou/core_lib/bindings/OutboundPayload';
 import { Visibility } from '@martichou/core_lib/bindings/Visibility';
 
-import { ToastNotification, ToDelete, stateToDisplay, autostartKey, DisplayedItem, useToastStore, opt, ToastType, utils } from '../vue_lib';
+import { ToastNotification, ToDelete, stateToDisplay, autostartKey, numberToVisibility, DisplayedItem, useToastStore, opt, ToastType, utils } from '../vue_lib';
 
 import SettingsModal from '../composables/SettingsModal.vue';
 import Heading from '../composables/Heading.vue';
@@ -223,6 +255,8 @@ export default {
 			endpointsInfo: ref<EndpointInfo[]>([]),
 			toDelete: ref<ToDelete[]>([]),
 			handshakeDrops: new Set<string>(),
+			alwaysAccept: {} as Record<string, boolean>,
+			rates: {} as Record<string, { t: number; bytes: number; speed: number }>,
 			outboundPayload: ref<OutboundPayload | undefined>(),
 
 			// eslint-disable-next-line no-undef
@@ -273,6 +307,14 @@ export default {
 			}
 
 			this.unlisten.push(
+				await listen('rs2js_visibility', (event) => {
+					// The tray toggle changed visibility; keep the UI in sync.
+					const v = numberToVisibility[event.payload as number];
+					if (v) this.visibility = v;
+				})
+			);
+
+			this.unlisten.push(
 				await listen('rs2js_channelmessage', async (event) => {
 					const cm = event.payload as ChannelMessage;
 					// The transfer now has a real state; the endpoint's
@@ -304,6 +346,44 @@ export default {
 						});
 					} else {
 						this.handshakeDrops.delete(cm.id);
+					}
+
+					// Transfer-speed bookkeeping (EMA) for the progress card.
+					const ack = cm.meta?.ack_bytes as number | undefined;
+					if (ack !== undefined && ['SendingFiles', 'ReceivingFiles'].includes(cm.state ?? '')) {
+						const now = Date.now();
+						const r = this.rates[cm.id];
+						if (!r) {
+							this.rates[cm.id] = { t: now, bytes: ack, speed: 0 };
+						} else if (now - r.t >= 250 && ack >= r.bytes) {
+							const inst = (ack - r.bytes) / ((now - r.t) / 1000);
+							this.rates[cm.id] = { t: now, bytes: ack, speed: r.speed > 0 ? r.speed * 0.7 + inst * 0.3 : inst };
+						}
+					} else if (['Finished', 'Cancelled', 'Rejected'].includes(cm.state ?? '')) {
+						delete this.rates[cm.id];
+					}
+
+					// Auto-accept transfers from trusted devices.
+					if (cm.state === 'WaitingForUserConsent') {
+						const from = cm.meta?.source?.name;
+						if (from && (await utils.getTrusted(this.vm)).includes(from)) {
+							utils.sendCmd(this.vm, cm.id, 'AcceptTransfer');
+							this.toastStore.addToast(`Auto-accepted transfer from ${from}`, ToastType.Info);
+						}
+					}
+
+					// Desktop notification when a transfer lands and the window
+					// isn't focused (tray / background use).
+					if (cm.state === 'Finished' && cm.rtype === 'Inbound' && !document.hasFocus()) {
+						if (await isPermissionGranted()) {
+							const what = cm.meta?.files?.length
+								? `Received ${cm.meta.files.length} file(s)`
+								: 'Received text';
+							sendNotification({
+								title: 'Open Quick Share',
+								body: `${what} from ${cm.meta?.source?.name ?? 'a nearby device'}`,
+							});
+						}
 					}
 
 					// TODO - Automatically open || copy to clipboard + toast
@@ -445,6 +525,31 @@ export default {
 				this.toastStore.addToast("Error opening URL, it may not be a valid URI", ToastType.Error);
 				console.error("Error opening URL", e);
 			}
+		},
+		dirOf: function(p: string): string {
+			const i = p.lastIndexOf('/');
+			return i > 0 ? p.substring(0, i) : p;
+		},
+		acceptTransfer: async function(item: DisplayedItem) {
+			if (this.alwaysAccept[item.id] && item.name && item.name !== 'Unknown') {
+				await utils.addTrusted(this.vm, item.name);
+				this.toastStore.addToast(`Will auto-accept future transfers from ${item.name}`, ToastType.Info);
+			}
+			utils.sendCmd(this.vm, item.id, 'AcceptTransfer');
+		},
+		canRetry: function(item: DisplayedItem): boolean {
+			return !!this.outboundPayload
+				&& this.endpointsInfo.some((e) => e.id === item.id || (e.name ?? '') === item.name);
+		},
+		retrySend: async function(item: DisplayedItem) {
+			const ei = this.endpointsInfo.find((e) => e.id === item.id)
+				?? this.endpointsInfo.find((e) => (e.name ?? '') === item.name);
+			if (!ei || !this.outboundPayload) {
+				this.toastStore.addToast('Nothing to retry — paste or drop the files again', ToastType.Error);
+				return;
+			}
+			utils.removeRequest(this.vm, item.id);
+			await utils.sendInfo(this.vm, ei.id);
 		},
 	},
 }

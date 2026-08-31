@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { utils } from '../vue_lib';
-import { PropType } from 'vue';
+import { PropType, ref, watchEffect } from 'vue';
 import { TauriVM } from '../vue_lib/helper/ParamsHelper';
 
 const props = defineProps({
@@ -9,6 +9,14 @@ const props = defineProps({
 		required: true
 	}
 });
+
+const trusted = ref<string[]>([]);
+watchEffect(async () => {
+	if (props.vm.settingsOpen) trusted.value = await utils.getTrusted(props.vm);
+});
+async function dropTrusted(name: string) {
+	trusted.value = await utils.removeTrusted(props.vm, name);
+}
 
 const emit = defineEmits(['close']);
 
@@ -59,6 +67,23 @@ function openDownloadPicker() {
 							class="flex-1 capitalize text-sm rounded-md py-1 transition duration-150 ease-in-out active:scale-95"
 							:class="vm.theme === opt ? 'bg-green-200 text-black' : 'hover:bg-gray-500 hover:bg-opacity-10'">
 							{{ opt }}
+						</button>
+					</div>
+				</div>
+				<div class="form-control rounded-xl p-3">
+					<span class="label-text block">Trusted devices</span>
+					<span class="text-xs opacity-60 block mb-2">
+						Transfers from these devices are accepted automatically — only trust devices you own
+					</span>
+					<p v-if="trusted.length === 0" class="text-xs opacity-40">
+						None yet — tick "Always accept from this device" on an incoming request.
+					</p>
+					<div v-for="t in trusted" :key="t" class="flex flex-row items-center justify-between text-sm py-1">
+						<span class="overflow-hidden text-ellipsis whitespace-nowrap">{{ t }}</span>
+						<button
+							class="px-2 rounded-md hover:bg-gray-500 hover:bg-opacity-10 active:scale-95 transition duration-150 ease-in-out"
+							@click="dropTrusted(t)">
+							✕
 						</button>
 					</div>
 				</div>

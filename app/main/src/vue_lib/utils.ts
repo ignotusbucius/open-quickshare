@@ -1,6 +1,6 @@
 import { Visibility } from '@martichou/core_lib/bindings/Visibility';
 import { TauriVM } from './helper/ParamsHelper';
-import { autostartKey, deviceNameKey, DisplayedItem, downloadPathKey, numberToVisibility, realcloseKey, startminimizedKey, stateToDisplay, visibilityKey, visibilityToNumber } from './types';
+import { autostartKey, deviceNameKey, trustedKey, DisplayedItem, downloadPathKey, numberToVisibility, realcloseKey, startminimizedKey, stateToDisplay, visibilityKey, visibilityToNumber } from './types';
 import { SendInfo } from '@martichou/core_lib/bindings/SendInfo';
 import { ChannelMessage } from '@martichou/core_lib/bindings/ChannelMessage';
 import { ChannelAction } from '@martichou/core_lib';
@@ -180,6 +180,27 @@ async function sendInfo(vm: TauriVM, eid: string) {
 	await vm.invoke('send_payload', { message: msg });
 }
 
+// Devices whose incoming transfers are accepted without asking. Stored as a
+// plain list of device names — the only stable identity Quick Share exposes.
+async function getTrusted(vm: TauriVM): Promise<string[]> {
+	return ((await vm.store.get(trustedKey)) as string[] | undefined) ?? [];
+}
+
+async function addTrusted(vm: TauriVM, name: string): Promise<string[]> {
+	const list = await getTrusted(vm);
+	if (!list.includes(name)) list.push(name);
+	await vm.store.set(trustedKey, list);
+	await vm.store.save();
+	return list;
+}
+
+async function removeTrusted(vm: TauriVM, name: string): Promise<string[]> {
+	const list = (await getTrusted(vm)).filter((n) => n !== name);
+	await vm.store.set(trustedKey, list);
+	await vm.store.save();
+	return list;
+}
+
 async function sendCmd(vm: TauriVM, id: string, action: ChannelAction) {
 	const cm: ChannelMessage = {
 		id: id,
@@ -309,6 +330,9 @@ export const utils = {
 	getStartMinimized,
 	setDeviceName,
 	getDeviceName,
+	getTrusted,
+	addTrusted,
+	removeTrusted,
 	setTheme,
 	getTheme,
 	applyTheme,

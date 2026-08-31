@@ -14,7 +14,7 @@ use store::get_startminimized;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
 use tauri::{
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
     AppHandle, Emitter, Manager, Window, WindowEvent,
 };
@@ -91,12 +91,18 @@ async fn main() -> Result<(), anyhow::Error> {
                 .enabled(false)
                 .build(app)?;
             let show = MenuItemBuilder::with_id("show", "Show").build(app)?;
+            let initial_visible = matches!(get_visibility(app.app_handle()), Visibility::Visible);
+            let vis_toggle =
+                CheckMenuItemBuilder::with_id("visibility", "Visible to nearby devices")
+                    .checked(initial_visible)
+                    .build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&name)
                 .separator()
-                .items(&[&show, &quit])
+                .items(&[&show, &vis_toggle, &quit])
                 .build()?;
+            let vis_for_handler = vis_toggle.clone();
 
             #[cfg(target_os = "macos")]
             let icon = Image::from_bytes(include_bytes!("../icons/tray.png")).unwrap();
@@ -110,6 +116,22 @@ async fn main() -> Result<(), anyhow::Error> {
                     "show" => {
                         trace!("tray_show");
                         open_main_window(app);
+                    }
+                    "visibility" => {
+                        // CheckMenuItem toggles itself before this fires; its
+                        // checked state is the NEW desired visibility.
+                        let checked = vis_for_handler.is_checked().unwrap_or(true);
+                        let v = if checked {
+                            Visibility::Visible
+                        } else {
+                            Visibility::Invisible
+                        };
+                        info!("tray_visibility: {v:?}");
+                        let _ = set_visibility(app.app_handle(), v);
+                        let state: tauri::State<AppState> = app.state();
+                        state.rqs.lock().unwrap().change_visibility(v);
+                        // Keep the frontend's settings in sync.
+                        let _ = app.emit("rs2js_visibility", if checked { 0 } else { 1 });
                     }
                     "quit" => {
                         trace!("tray_quit");

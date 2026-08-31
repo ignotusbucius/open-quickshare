@@ -82,6 +82,27 @@ The protocol details were reverse‑engineered against live captures and validat
 bandwidth‑upgrade frames — including the dynamic role negotiation that Quick Share for
 Windows uses).
 
+The app
+--------------------------
+
+Beyond the transport stack, the desktop app covers the everyday details:
+
+- **Paste to share** — press <kbd>Ctrl</kbd>+<kbd>V</kbd> on the window: copied files are
+  shared as‑is, copied text is written to a `.txt` and shared (same behavior as Quick Share
+  for Windows). Drag‑and‑drop works too.
+- **Received things are one click away** — files get an *Open folder* button and a desktop
+  notification if the window isn't focused; received links render as clickable URLs; text
+  has a *Copy* button.
+- **Trusted devices** — tick *"Always accept from this device"* on an incoming request and
+  future transfers from it are accepted automatically (manage the list in Settings).
+- **Live progress** — transfer speed and time remaining on every card, a *Retry* button on
+  failures, and error messages that say what actually went wrong and what to do.
+- **Tray-first** — runs in the system tray, with a *Visible to nearby devices* toggle right
+  in the tray menu; start on boot / start minimized / keep running on close are all
+  configurable.
+- **Looks right everywhere** — full dark‑mode support following the system theme, and a
+  custom device name so your phone sees something nicer than a hostname.
+
 Requirements
 --------------------------
 
@@ -104,6 +125,8 @@ Limitations
   need to be connected to anything). With the radio fully off, Android refuses all Wi‑Fi
   upgrades and only small payloads (≈1 MB) are accepted over pure BLE — the same wall the
   official clients hit, which they dodge by auto‑enabling the radio from inside the OS.
+  In practice recent Android versions re‑enable the radio themselves when the Quick Share
+  receive screen opens, so this rarely needs manual attention.
 - **"Everyone" visibility only.** Contacts / Your‑devices modes require Google‑account
   certificate exchange that a third‑party client cannot perform.
 - **Hosting a hotspot can briefly take the PC's Wi‑Fi off its network** (single‑channel
@@ -111,8 +134,12 @@ Limitations
   machines are unaffected throughout.
 - Environment toggles: `PACKET_BLE_SEND=off` disables BLE sending, `PACKET_PREFER_BLE=on`
   forces BLE‑only discovery (testing), `PACKET_BLE_L2CAP=off` disables the L2CAP listener.
-- Diagnostic tools live in `core_lib/examples/` (`tx_probe` — scan/decode/dial a receiver,
-  `tx_send` — full command‑line send).
+- Diagnostic tools live in `core_lib/examples/`: `app_send` (drives the full app engine —
+  discovery, dial ladder, upgrades — from the command line), `rx_service` (headless
+  auto‑accepting receiver), `tx_probe` (scan/decode/dial a receiver) and `tx_send`
+  (low‑level protocol send). `scripts/interop-test.sh` walks a guided interop matrix —
+  four payload sizes × send/receive × same‑LAN / Wi‑Fi Direct / pure BLE — against a real
+  phone and prints a PASS/FAIL report.
 
 Installation
 --------------------------
@@ -195,10 +222,12 @@ best first: connect the phone to the same Wi‑Fi as the PC; or leave the phone 
 on the receive screen for a minute (scanning backs off), then retry. Receiving **on**
 the PC is unaffected — the phone drives that direction and it works even mid‑scan.
 
-### A large transfer says "Too large for Bluetooth — turn on Wi‑Fi"
+### A large transfer cancels itself right after the handshake
 
-The phone's Wi‑Fi radio is off, so no Wi‑Fi upgrade is possible (see Limitations). Enable
-Wi‑Fi on the phone — it does *not* need to join any network — and retry.
+No Wi‑Fi upgrade was possible (typically the phone's Wi‑Fi radio is off — see Limitations),
+and payloads above ~1 MB aren't attempted over pure Bluetooth: the transfer is refused up
+front rather than left to stall. Enable Wi‑Fi on the phone — it does *not* need to join any
+network — and retry.
 
 ### Sending to a Windows PC fails after Accept
 
@@ -209,8 +238,8 @@ Android phones are the supported target for now; Windows interop is on the list.
 ### My firewall is blocking the connection
 
 For same‑network transfers you can pin the app's port in
-`~/.local/share/dev.mandre.rquickshare/.settings.json` (`"port": 12345`) and allow it. For
-hosted‑hotspot receiving, see the firewalld rule under Requirements.
+`~/.local/share/com.github.ignotusbucius.openquickshare/.settings.json` (`"port": 12345`)
+and allow it. For hosted‑hotspot receiving, see the firewalld rule under Requirements.
 
 Credits
 --------------------------
@@ -228,4 +257,5 @@ Contributing
 
 Pull requests are welcome. For major changes, please open an issue first to discuss what you
 would like to change. Reports from non‑Pixel devices are especially valuable (see
-Limitations).
+Limitations) — `scripts/interop-test.sh` walks the full send/receive × transport matrix
+against your device and produces a report worth attaching to an issue.

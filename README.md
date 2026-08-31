@@ -74,6 +74,7 @@ Compared to Google's official Quick Share
 | Large files with **no shared network** (Wi‑Fi Direct / hotspot) | ✅ | ✅ |
 | Small transfers over pure Bluetooth | ✅ | ✅ |
 | Automatic network setup and teardown | ✅ | ✅ |
+| Interop with Quick Share for **Windows** | ✅ | ✅ *(send and receive, verified)* |
 | "Contacts" / "Your devices" visibility | ✅ | ❌ *(bound to Google accounts; not possible for third parties — "Everyone" mode only)* |
 | Auto‑enabling the phone's Wi‑Fi radio | ✅ *(the OS does it)* | ❌ *(the phone's radio must already be on; see Limitations)* |
 

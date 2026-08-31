@@ -145,6 +145,10 @@ pub struct OutboundRequest<S = TcpStream> {
     /// A BandwidthUpgradeNegotiation frame that arrived while the state machine
     /// was mid-handshake; consumed by the upgrade wait after consent.
     pending_bwu: Option<OfflineFrame>,
+    /// The peer's OS as reported in its ConnectionResponse. Windows receivers
+    /// require the payload over a bandwidth-upgraded channel even when the
+    /// initial connection is already TCP, so the upgrade wait runs for them.
+    peer_os: Option<i32>,
     /// Set once a Wi-Fi Direct/hotspot offer has been declined to nudge the
     /// phone into re-evaluating (the LAN-preference dance in
     /// [`Self::try_wifi_upgrade_client`]); the next offer is taken as-is.
@@ -199,6 +203,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             payload,
             mediums: vec![Medium::WifiLan.into()],
             pending_bwu: None,
+            peer_os: None,
             bwu_declined_direct: false,
             #[cfg(all(feature = "experimental", target_os = "linux"))]
             hotspot_guard: None,
@@ -548,6 +553,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         if v1_frame.connection_response.is_none() {
             return Err(anyhow!(format!("Unexpected None connection_response",)));
         }
+
+        // Remember who we're talking to: Windows receivers need the payload
+        // over an upgraded channel (see try_wifi_upgrade_client).
+        self.peer_os = v1_frame
+            .connection_response
+            .as_ref()
+            .unwrap()
+            .os_info
+            .as_ref()
+            .and_then(|o| o.r#type);
+        info!("peer os_info: {:?}", self.peer_os);
 
         if v1_frame.connection_response.as_ref().unwrap().response() != ResponseStatus::Accept {
             return Err(anyhow!(format!("Connection rejected by third party",)));
@@ -999,8 +1015,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         use location_nearby_connections::bandwidth_upgrade_negotiation_frame::EventType;
         use location_nearby_connections::bandwidth_upgrade_negotiation_frame::upgrade_path_info::Medium as UpMedium;
 
+        let peer_is_windows =
+            self.peer_os == Some(location_nearby_connections::os_info::OsType::Windows as i32);
+        if !self.socket.is_low_bandwidth() && !peer_is_windows {
+            return Ok(false); // already on Wi-Fi/TCP and the peer is fine with it.
+        }
         if !self.socket.is_low_bandwidth() {
-            return Ok(false); // already on Wi-Fi/TCP.
+            // Windows accepts the transfer but never consumes the payload on
+            // the initial connection — it offers an upgraded channel and spins
+            // "Connecting…" until the sender joins it. Take the offer.
+            info!("BWU(send): peer is Windows; waiting for its upgrade offer");
         }
 
         // Wait for the phone's move: an UPGRADE_PATH_AVAILABLE (WIFI_LAN — same

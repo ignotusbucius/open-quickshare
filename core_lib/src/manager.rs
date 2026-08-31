@@ -163,6 +163,12 @@ impl TcpServer {
             )
         })??;
 
+        // Wrap in the migratable stream so a bandwidth upgrade can swap the
+        // transport even on a direct TCP send (Windows receivers demand the
+        // payload over an upgraded channel).
+        #[cfg(all(feature = "experimental", target_os = "linux"))]
+        let socket = crate::hdl::MigratableStream::Tcp(socket);
+
         let mut or = OutboundRequest::new(
             self.endpoint_id,
             socket,

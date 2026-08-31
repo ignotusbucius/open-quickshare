@@ -181,12 +181,20 @@ run_send() {
   say "Phone: make sure it is on the Quick Share ${YEL}receive screen (Everyone)${RST}, then it will show an Accept prompt."
   ask "[Enter]=run   s=skip:"; read -r a; [ "$a" = s ] && { record SEND "$transport" "$label" SKIP - "skipped"; return; }
 
+  # TRUE app parity (manager.rs): payloads ≤ 1 MB advertise BLE_L2CAP only
+  # ([10]); larger payloads advertise the block's Wi-Fi set. Advertising Wi-Fi
+  # mediums on a small send is something the app never does — and the phone
+  # can hang up right after paired-key when we do.
+  local eff_mediums="$mediums"
+  [ "$(stat -c%s "$file")" -le 1048576 ] && eff_mediums="10"
+  say "${DIM}  mediums: [$eff_mediums]${RST}"
+
   # The headless tx_send uses a single-shot BLE dial (no retry ladder like the
   # app), and the phone's L2CAP PSM rotates, so a fresh scan+dial can miss.
   # Retry the whole send a couple times on a dial miss before giving up.
   local rc=1 attempt
   for attempt in 1 2 3; do
-    PACKET_SEND_MEDIUMS="$mediums" RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
+    PACKET_SEND_MEDIUMS="$eff_mediums" RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
       "$EX_DIR/tx_send" "$file" >"$log" 2>&1
     rc=$?
     grep -q 'final state Finished' "$log" && break

@@ -838,6 +838,23 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                     .as_ref()
                     .ok_or_else(|| anyhow!("Missing required fields"))?;
 
+                // Interop forensics: a working peer's exact chunk shape is the
+                // template for our own sender (Windows is stricter than
+                // Android about these fields).
+                debug!(
+                    "payload frame: id={} type={:?} total_size={:?} name={:?} sensitive={:?} parent={:?} | chunk offset={:?} index={:?} flags={:?} body_len={}",
+                    header.id(),
+                    header.r#type(),
+                    header.total_size,
+                    header.file_name,
+                    header.is_sensitive,
+                    header.parent_folder,
+                    chunk.offset,
+                    chunk.index,
+                    chunk.flags,
+                    chunk.body.as_ref().map(|b| b.len()).unwrap_or(0)
+                );
+
                 // Track chunk counts per payload for the AUTO_RESUME answer
                 // after a mid-transfer channel switch.
                 *self

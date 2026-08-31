@@ -1718,6 +1718,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
 										offset: Some(curr_state.bytes_transferred),
 										flags: Some(0),
 										body: Some(buffer[..bytes_read].to_vec()),
+										// Sequential chunk index — some receivers
+										// (Windows) reassemble by index, not offset.
+										index: Some((curr_state.bytes_transferred
+											/ payload_buf_len as i64) as i32),
 										..Default::default()
 									}),
 									payload_header: Some(payload_header.clone()),
@@ -1765,6 +1769,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
 											offset: Some(curr_state.total_size),
 											flags: Some(1), // lastChunk
 											body: Some(vec![]),
+											index: Some(((curr_state.total_size
+												+ payload_buf_len as i64
+												- 1) / payload_buf_len as i64)
+												as i32),
 											..Default::default()
 										}),
 										payload_header: Some(payload_header),
@@ -1991,6 +1999,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 offset: Some(0),
                 flags: Some(0),
                 body: Some(frame_data),
+                index: Some(0),
                 ..Default::default()
             }),
             payload_header: Some(payload_header.clone()),
@@ -2018,6 +2027,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 offset: Some(body_size as i64),
                 flags: Some(1), // lastChunk
                 body: Some(vec![]),
+                index: Some(1),
                 ..Default::default()
             }),
             payload_header: Some(payload_header),

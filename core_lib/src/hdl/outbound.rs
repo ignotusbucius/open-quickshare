@@ -859,7 +859,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                         .file_name()
                         .ok_or_else(|| anyhow!("Failed to get file_name for {f}"))?;
                     let fmeta = FileMetadata {
-                        payload_id: Some(rand::rng().random::<i64>()),
+                        // Positive like Google's own implementations generate —
+                        // a strict receiver (Windows) may discard payloads with
+                        // a negative id as invalid.
+                        payload_id: Some(
+                            rand::rng().random::<i64>().unsigned_abs() as i64 & i64::MAX,
+                        ),
                         name: Some(fname.to_os_string().into_string().unwrap()),
                         size: Some(fmetadata.size() as i64),
                         mime_type: Some(ftype),
@@ -1052,7 +1057,14 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 })
                 .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref());
             let Some(bwu) = bwu else {
-                // KeepAlive or other in-band frame while waiting; keep waiting.
+                // KeepAlive or other in-band frame while waiting; ack pings so
+                // the peer's keepalive timer doesn't kill the session, then
+                // keep waiting.
+                if offline.v1.as_ref().map(|v| v.r#type())
+                    == Some(location_nearby_connections::v1_frame::FrameType::KeepAlive)
+                {
+                    let _ = self.send_keepalive(true).await;
+                }
                 continue;
             };
             match bwu.event_type() {
@@ -1840,33 +1852,32 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
     /// a fast caller from ripping the TCP socket down before the phone has
     /// finalized the transfer.
     /// Drain incoming frames until the peer closes the connection or `grace`
-    /// elapses. Returns `true` if the peer actually closed (EOF observed).
+    /// elapses, ACKING ITS KEEPALIVES along the way — a receiver that pings
+    /// every 5s (Windows) tears the session down if the pings go unanswered
+    /// while it finalizes. Returns `true` if the peer closed (EOF or an
+    /// explicit DISCONNECTION frame).
     async fn wait_for_peer_close(&mut self, grace: Duration) -> bool {
-        tokio::time::timeout(grace, async {
-            let mut length_buf = [0u8; 4];
-            loop {
-                if stream_read_exact(&mut self.socket, &mut length_buf)
-                    .await
-                    .is_err()
-                {
-                    break; // peer closed the connection (EOF) — it's done
+        let deadline = tokio::time::Instant::now() + grace;
+        loop {
+            match tokio::time::timeout_at(deadline, self.read_encrypted_offline_frame()).await {
+                Err(_) => return false,    // grace elapsed, peer still connected
+                Ok(Err(_)) => return true, // EOF / read error — peer is gone
+                Ok(Ok(frame)) => {
+                    if let Some(v1) = frame.v1.as_ref() {
+                        match v1.r#type() {
+                            location_nearby_connections::v1_frame::FrameType::KeepAlive => {
+                                let _ = self.send_keepalive(true).await;
+                            }
+                            location_nearby_connections::v1_frame::FrameType::Disconnection => {
+                                debug!("peer sent DISCONNECTION during close-wait");
+                                return true;
+                            }
+                            _ => {} // drained and ignored
+                        }
+                    }
                 }
-                let len = u32::from_be_bytes(length_buf) as usize;
-                if len == 0 || len > SANE_FRAME_LENGTH as usize {
-                    continue;
-                }
-                let mut body = vec![0u8; len];
-                if stream_read_exact(&mut self.socket, &mut body)
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-                // Discard; keep draining until the peer closes or grace elapses.
             }
-        })
-        .await
-        .is_ok()
+        }
     }
 
     async fn finalize_key_exchange(

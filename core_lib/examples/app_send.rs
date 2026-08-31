@@ -162,21 +162,24 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    rqs.stop_discovery();
-    rqs.stop().await;
-
-    match final_state {
+    // Verdict FIRST — service teardown (mdns/bluer) can wedge, and the caller
+    // needs the result line even if cleanup stalls. Then bounded cleanup and a
+    // hard exit so lingering non-tokio threads can't keep the process alive.
+    let code = match final_state {
         Some(TransferState::Finished) => {
             info!("final state Finished");
-            Ok(())
+            0
         }
         Some(s) => {
             error!("final state {:?}", s);
-            std::process::exit(1);
+            1
         }
         None => {
             error!("timed out without reaching a terminal state");
-            std::process::exit(1);
+            1
         }
-    }
+    };
+    rqs.stop_discovery();
+    let _ = tokio::time::timeout(Duration::from_secs(8), rqs.stop()).await;
+    std::process::exit(code);
 }

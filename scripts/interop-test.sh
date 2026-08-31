@@ -186,9 +186,12 @@ run_send() {
   # unused; the engine decides exactly as the app does.
   local rc=1 attempt
   for attempt in 1 2; do
+    # tee full output to the log; surface state transitions live so the cell
+    # never looks stuck while the engine works.
     RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
-      "$EX_DIR/app_send" "$file" >"$log" 2>&1
-    rc=$?
+      "$EX_DIR/app_send" "$file" 2>&1 | tee "$log" | \
+      awk '{ if (match($0, /\[state\].*|\[pin\].*|final state.*|no matching receiver.*/)) { print "    " substr($0, RSTART); fflush() } }'
+    rc=${PIPESTATUS[0]}
     grep -q 'final state Finished' "$log" && break
     grep -qiE 'too large to send over Bluetooth' "$log" && break
     grep -qiE 'no matching receiver found' "$log" || break

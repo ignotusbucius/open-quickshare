@@ -92,6 +92,8 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let _ = tokio::signal::ctrl_c().await;
     info!("Stopping service.");
-    rqs.stop().await;
-    Ok(())
+    // Bounded teardown + hard exit: mdns/bluer shutdown can wedge, which would
+    // leave the process (and anything `wait`ing on it) hanging forever.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(8), rqs.stop()).await;
+    std::process::exit(0);
 }

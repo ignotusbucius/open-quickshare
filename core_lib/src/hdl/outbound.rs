@@ -912,6 +912,24 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
 
         self.send_encrypted_frame(&introduction).await?;
 
+        // Consent is mutual in the sharing layer: real senders (Android and
+        // Windows alike) follow the INTRODUCTION with their own
+        // Response(ACCEPT). Android receivers don't miss it, but Windows
+        // waits for the sender's accept before leaving "Connecting…" — and
+        // reports "Can't complete transfer" without it even after saving the
+        // whole payload.
+        let sender_accept = sharing_nearby::Frame {
+            version: Some(sharing_nearby::frame::Version::V1.into()),
+            v1: Some(sharing_nearby::V1Frame {
+                r#type: Some(sharing_nearby::v1_frame::FrameType::Response.into()),
+                connection_response: Some(sharing_nearby::ConnectionResponseFrame {
+                    status: Some(sharing_nearby::connection_response_frame::Status::Accept.into()),
+                }),
+                ..Default::default()
+            }),
+        };
+        self.send_encrypted_frame(&sender_accept).await?;
+
         Ok(())
     }
 

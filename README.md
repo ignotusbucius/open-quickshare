@@ -5,6 +5,12 @@
   <p>
     <strong>Complete Quick Share for Linux — send & receive over Bluetooth LE, Wi‑Fi LAN and Wi‑Fi Direct. No shared network required.</strong>
   </p>
+
+  <p>
+    <a href="https://github.com/ignotusbucius/open-quickshare/releases"><img src="https://img.shields.io/github/v/release/ignotusbucius/open-quickshare?color=2ea44f" alt="Latest release"></a>
+    <a href="https://github.com/ignotusbucius/open-quickshare/releases"><img src="https://img.shields.io/github/downloads/ignotusbucius/open-quickshare/total?color=2ea44f" alt="Downloads"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/ignotusbucius/open-quickshare" alt="License GPL-3.0"></a>
+  </p>
 </div>
 
 > Also known as **rquickshare-complete** — a complete implementation of the Quick Share
@@ -13,8 +19,15 @@
 > The full git history (and therefore authorship) of both is preserved in this repository.
 > Licensed GPL‑3, like the projects it builds on.
 
+Looking for **Quick Share on Linux**, **Nearby Share for Linux**, or a way to **send files
+between an Android phone and a Linux PC over Bluetooth** — no cable, no cloud, no shared
+Wi‑Fi? This is that: a native Linux client for the Quick Share protocol built into every
+Android phone (and Quick Share for Windows). Nothing to install on the phone — unlike
+LocalSend or KDE Connect, which need their own app on both ends, open‑quickshare speaks
+the phone's **built‑in** sharing. Think AirDrop, for the Android + Linux world.
+
 <div align="center">
-  <img src=".github/screenshot.png" alt="Open QuickShare — Ready to receive" width="720">
+  <img src=".github/screenshot.png" alt="Open QuickShare for Linux — receiving files from Android over Bluetooth and Wi-Fi" width="720">
 </div>
 
 Why "complete"

@@ -111,7 +111,13 @@ async fn main() -> Result<(), anyhow::Error> {
                 if prefer == "ble" && !is_ble {
                     continue;
                 }
-                if prefer == "wifi" && is_ble && ep_tx.borrow().as_ref().is_some_and(|c| c.ble_addr.is_none()) {
+                if prefer == "wifi"
+                    && is_ble
+                    && ep_tx
+                        .borrow()
+                        .as_ref()
+                        .is_some_and(|c| c.ble_addr.is_none())
+                {
                     continue; // keep the Wi-Fi endpoint we already hold
                 }
                 let _ = ep_tx.send(Some(ei));

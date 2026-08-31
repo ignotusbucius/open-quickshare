@@ -37,8 +37,8 @@ function openDownloadPicker() {
 
 <template>
 	<div v-if="vm.settingsOpen" class="absolute z-10 w-full h-full flex justify-center items-center bg-black bg-opacity-25">
-		<div class="bg-white dark:bg-neutral-800 rounded-xl shadow-xl p-4 w-[24rem]">
-			<div class="flex flex-row justify-between items-center">
+		<div class="bg-white dark:bg-neutral-800 rounded-xl shadow-xl p-4 w-[24rem] max-h-[85%] flex flex-col">
+			<div class="flex flex-row justify-between items-center shrink-0">
 				<h3 class="font-medium text-xl">
 					Settings
 				</h3>
@@ -46,7 +46,7 @@ function openDownloadPicker() {
 					Close
 				</div>
 			</div>
-			<div class="py-4 flex flex-col">
+			<div class="py-4 flex flex-col flex-1 min-h-0 overflow-y-auto">
 				<div class="form-control rounded-xl p-3">
 					<label class="flex flex-col items-start gap-1">
 						<span class="label-text">Device name</span>

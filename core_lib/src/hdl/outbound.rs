@@ -1567,8 +1567,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 // Over pure BLE the socket MTU caps how big a single frame can be
                 // delivered, so stream the payload in small chunks; over Wi-Fi a
                 // large buffer keeps throughput high.
+                let peer_is_windows = self.peer_os
+                    == Some(location_nearby_connections::os_info::OsType::Windows as i32);
                 let payload_buf_len = if self.socket.is_low_bandwidth() {
                     BLE_PAYLOAD_CHUNK
+                } else if peer_is_windows {
+                    // Mirror Windows' own chunking (its sender uses 64 KB).
+                    64 * 1024
                 } else {
                     WIFI_PAYLOAD_CHUNK
                 };
@@ -1591,9 +1596,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                             let peer_closed =
                                 self.wait_for_peer_close(Duration::from_secs(8)).await;
                             if !peer_closed {
-                                debug!("peer still connected after grace; sending disconnection");
-                                self.disconnection().await?;
-                                self.wait_for_peer_close(Duration::from_secs(2)).await;
+                                // Windows never sends a DISCONNECTION frame as a
+                                // sender and treats receiving one as a broken
+                                // transfer ("Can't complete") even with the file
+                                // already saved — mirror its etiquette: linger,
+                                // then hang up silently. Android peers keep the
+                                // announced disconnection (proven behavior).
+                                if peer_is_windows {
+                                    debug!("windows peer: closing quietly, no disconnection frame");
+                                } else {
+                                    debug!(
+                                        "peer still connected after grace; sending disconnection"
+                                    );
+                                    self.disconnection().await?;
+                                    self.wait_for_peer_close(Duration::from_secs(2)).await;
+                                }
                             }
                             self.update_state(
                                 |e| {
@@ -1703,6 +1720,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                                 .file_url
                                 .file_name()
                                 .map(|name| name.to_string_lossy().into_owned()),
+                            // Present-but-empty, matching Windows' own frames.
+                            parent_folder: Some(String::new()),
                             ..Default::default()
                         };
 

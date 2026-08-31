@@ -42,6 +42,10 @@ jobs:
 
       - name: Build (Vite + Tauri) — deb, rpm, AppImage
         run: |
+          # The Rust cache restores target/ including PREVIOUS versions'
+          # bundles, and the attach step globs the whole bundle dir — stale
+          # old-version assets ended up on releases twice. Start clean.
+          rm -rf app/main/src-tauri/target/release/bundle
           cd app/main
           pnpm install
           pnpm build

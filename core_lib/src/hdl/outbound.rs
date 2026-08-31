@@ -879,8 +879,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                         size: Some(fmetadata.size() as i64),
                         mime_type: Some(ftype),
                         r#type: Some(meta_type.into()),
+                        // The attachment uuid ("Should be unique across all
+                        // attachments"). Receivers key their transfer
+                        // bookkeeping on it — Android tolerates its absence,
+                        // Windows sits at "Connecting…" without it while the
+                        // payload still saves.
+                        id: Some(rand::rng().random::<i64>().unsigned_abs() as i64 & i64::MAX),
                         ..Default::default()
                     };
+                    info!(
+                        "introduction attachment: id={:?} payload_id={:?} name={:?} size={:?} mime={:?}",
+                        fmeta.id, fmeta.payload_id, fmeta.name, fmeta.size, fmeta.mime_type
+                    );
                     transferred_files.insert(
                         fmeta.payload_id(),
                         InternalFileInfo {

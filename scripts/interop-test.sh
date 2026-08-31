@@ -8,9 +8,10 @@
 #
 # SEND cells drive the APP'S OWN engine headlessly (app_send: the same RQS
 # service, discovery, dial ladder and medium logic the app runs); RECEIVE cells
-# run the same engine via rx_service. No GUI involved. You only touch the phone
-# when prompted. Each cell reports PASS/FAIL and the transport that was
-# ACTUALLY used, then a summary matrix is printed and saved.
+# run the same engine via rx_service. Crucially the engine runs ONCE PER BLOCK
+# (like the long-lived app), not once per file — starting/stopping the BLE
+# stack per cell churns BlueZ until the link slows and the phone's handshake
+# timer kills transfers at paired-key.
 #
 # Usage:
 #   scripts/interop-test.sh                 # full matrix, interactive
@@ -33,7 +34,7 @@ WORK="${WORK:-$HOME/.cache/oqs-interop}"
 PAYLOAD_DIR="$WORK/payloads"
 DL_DIR="$WORK/received"                       # rx_service download target
 REPORT="$WORK/report-$(date +%Y%m%d-%H%M%S).txt"
-RECV_TIMEOUT="${RECV_TIMEOUT:-60}"           # seconds to wait for a phone->PC file
+RECV_TIMEOUT="${RECV_TIMEOUT:-60}"            # idle seconds before a receive cell gives up
 
 BLU=$'\e[1;34m'; GRN=$'\e[1;32m'; RED=$'\e[1;31m'; YEL=$'\e[1;33m'; DIM=$'\e[2m'; RST=$'\e[0m'
 say()  { printf '%s\n' "$*"; }
@@ -68,7 +69,7 @@ fi
 export TARGET_NAME
 say "${DIM}Using phone filter: '${TARGET_NAME:-<any>}'${RST}"
 
-# ---- locate / verify example binaries --------------------------------------
+# ---- locate / verify engine binaries ---------------------------------------
 need_build=0
 for b in app_send rx_service; do [ -x "$EX_DIR/$b" ] || need_build=1; done
 if [ "$need_build" = 1 ]; then
@@ -109,8 +110,7 @@ gen_payloads() {
     else head -c 350000 /dev/urandom > "$im"; fi
   fi
 
-  # big mp4: > 1 MB on purpose so it must upgrade to Wi-Fi (and is refused on pure BLE).
-  # testsrc compresses tiny, so force a high bitrate to land ~20 MB.
+  # big mp4: > 1 MB on purpose so the engine advertises the Wi-Fi mediums for it.
   if [ ! -s "$mp" ] || [ "$(stat -c%s "$mp")" -lt 5000000 ]; then
     if command -v ffmpeg >/dev/null; then
       ffmpeg -y -loglevel error -f lavfi -i "mandelbrot=size=1920x1080:rate=30" \
@@ -125,10 +125,9 @@ gen_payloads() {
     short "$(hsize "$st")" "single BLE frame" \
     long  "$(hsize "$lt")" "multi-chunk BLE" \
     image "$(hsize "$im")" "multi-chunk BLE, < 1 MB" \
-    mp4   "$(hsize "$mp")" "> 1 MB -> forces Wi-Fi; refused on pure BLE"
+    mp4   "$(hsize "$mp")" "> 1 MB -> engine offers Wi-Fi upgrade mediums"
 }
 
-# payload registry: label|path
 payload_path() {
   case "$1" in
     short) echo "$PAYLOAD_DIR/short.txt" ;;
@@ -153,7 +152,14 @@ start_app() {
   setsid -f bash -c "exec '$APPIMAGE' >/dev/null 2>&1"
 }
 
-# ---- transport detection from a run log ------------------------------------
+teardown_hotspots() {
+  local c
+  for c in $(nmcli -t -f NAME connection show --active 2>/dev/null | grep -i '^DIRECT-'); do
+    nmcli connection down "$c" >/dev/null 2>&1
+  done
+}
+
+# ---- transport detection from a log (or log slice) --------------------------
 detect_medium() {
   local log="$1"
   # Order matters: match markers of the transport ACTUALLY used, not medium
@@ -168,132 +174,134 @@ detect_medium() {
   else echo "?"; fi
 }
 
-record() { printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "$6" >> "$RESULTS"; }
-
-# ---- one SEND cell ---------------------------------------------------------
-run_send() {
-  local transport="$1" mediums="$2" label="$3"
-  local file; file="$(payload_path "$label")"
-  local sz; sz="$(hsize "$file")"
-  local log="$WORK/send-$transport-$label.log"
-  head1 "SEND · $transport · $label ($sz)"
-  say "Phone: make sure it is on the Quick Share ${YEL}receive screen (Everyone)${RST}, then it will show an Accept prompt."
-  ask "[Enter]=run   s=skip:"; read -r a; [ "$a" = s ] && { record SEND "$transport" "$label" SKIP - "skipped"; return; }
-
-  # app_send drives the APP'S OWN engine (RQS + manager.rs): its discovery,
-  # sender-side BLE advertising, dial retry ladder, and size-gated medium
-  # selection. Nothing here reimplements the app — $mediums is intentionally
-  # unused; the engine decides exactly as the app does.
-  local rc=1 attempt
-  for attempt in 1 2; do
-    # tee full output to the log; surface state transitions live so the cell
-    # never looks stuck while the engine works.
-    RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
-      "$EX_DIR/app_send" "$file" 2>&1 | tee "$log" | \
-      awk '{ if (match($0, /\[state\].*|\[pin\].*|final state.*|no matching receiver.*/)) { print "    " substr($0, RSTART); fflush() } }'
-    rc=${PIPESTATUS[0]}
-    grep -q 'final state Finished' "$log" && break
-    grep -qiE 'too large to send over Bluetooth' "$log" && break
-    grep -qiE 'no matching receiver found' "$log" || break
-    [ "$attempt" -lt 2 ] && { say "  ${DIM}receiver not discovered (attempt $attempt/2); retrying…${RST}"; sleep 3; }
-  done
-  local med; med="$(detect_medium "$log")"
-
-  if grep -q 'final state Finished' "$log"; then
-    ok "PC reports Finished  (medium: $med)"
-    ask "Did the file actually arrive/appear on the phone? [y/N]:"; read -r got
-    if [[ "$got" =~ ^[Yy] ]]; then record SEND "$transport" "$label" PASS "$med" "confirmed on phone"
-    else                          record SEND "$transport" "$label" FAIL "$med" "PC ok but phone did NOT receive"; fi
-  elif [ "$med" = "REFUSED-too-big" ]; then
-    ok "Refused up front as too large for BLE (expected on pure BLE)"
-    record SEND "$transport" "$label" "EXPECT-REFUSE" "$med" "correctly refused >1MB on BLE"
-  else
-    bad "send failed (rc=$rc). tail:"; tail -4 "$log" | sed 's/^/    /'
-    record SEND "$transport" "$label" FAIL "$med" "tx_send rc=$rc; see $log"
-  fi
+# Slice a block-level send log to the Nth attempted send and detect its medium.
+medium_for_attempt() {
+  local log="$1" n="$2" tmp="$WORK/.sect"
+  awk -v n="$n" '/connect_receiver: got SendInfo/{c++} c==n' "$log" > "$tmp"
+  detect_medium "$tmp"
 }
 
-# ---- one RECEIVE cell ------------------------------------------------------
-run_receive() {
-  local transport="$1" label="$2"
-  local log="$WORK/recv-$transport-$label.log"
-  head1 "RECEIVE · $transport · $label"
+record() { printf '%s|%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5" "$6" >> "$RESULTS"; }
+
+# ---- SEND block: one engine instance for all payloads ----------------------
+run_send_block() {
+  local transport="$1"
+  local out="$WORK/send-$transport.out" log="$WORK/send-$transport.log"
+  head1 "SEND block · $transport"
+  say "Phone: keep it on the Quick Share ${YEL}receive screen (Everyone)${RST} for all four files."
+  say "You'll be prompted before each file — press ${YEL}Enter${RST} to send it, ${YEL}s+Enter${RST} to skip."
+  echo
+
+  local flist=() pl
+  for pl in "${PAYLOADS[@]}"; do flist+=("$(payload_path "$pl")"); done
+
+  STEP=1 RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
+    "$EX_DIR/app_send" "${flist[@]}" 2>"$log" | tee "$out"
+  echo
+
+  # Parse per-file results; slice the shared log per attempted send for medium.
+  local attempt=0
+  for pl in "${PAYLOADS[@]}"; do
+    local f; f="$(payload_path "$pl")"
+    local res; res="$(grep -a -F "RESULT|$f|" "$out" | tail -1 | cut -d'|' -f3)"
+    case "$res" in
+      Skipped)    record SEND "$transport" "$pl" SKIP - "skipped"; continue ;;
+      NoReceiver) record SEND "$transport" "$pl" FAIL - "receiver never discovered"; continue ;;
+      "")         record SEND "$transport" "$pl" FAIL - "no result (engine aborted?)"; continue ;;
+    esac
+    attempt=$((attempt+1))
+    local med; med="$(medium_for_attempt "$log" "$attempt")"
+    if [ "$med" = "REFUSED-too-big" ]; then
+      ok "$pl: refused up front as too large for BLE (expected without Wi-Fi)"
+      record SEND "$transport" "$pl" "EXPECT-REFUSE" "$med" "correctly refused >1MB on BLE"
+    elif [ "$res" = "Finished" ]; then
+      ask "$pl: PC reports Finished (medium: $med) — did it actually arrive on the phone? [y/N]:"; read -r got
+      if [[ "$got" =~ ^[Yy] ]]; then record SEND "$transport" "$pl" PASS "$med" "confirmed on phone"
+      else                          record SEND "$transport" "$pl" FAIL "$med" "PC ok but phone did NOT receive"; fi
+    else
+      bad "$pl: $res  (medium: $med)"
+      record SEND "$transport" "$pl" FAIL "$med" "final state $res"
+    fi
+  done
+}
+
+# ---- RECEIVE block: one receiver instance for all payloads ------------------
+run_receive_block() {
+  local transport="$1"
+  local log="$WORK/recv-$transport.log"
+  head1 "RECEIVE block · $transport"
   rm -f "$DL_DIR"/* 2>/dev/null
-  # plain background (no setsid) so kill/wait actually reach rx_service
   RQS_DOWNLOAD_DIR="$DL_DIR" RQS_DEVICE_NAME="OQS Interop RX" \
     RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
     "$EX_DIR/rx_service" >"$log" 2>&1 &
   local rxpid=$!
   sleep 3
-  say "Phone: Quick Share → ${YEL}Send${RST} → pick the $label → choose ${YEL}'OQS Interop RX'${RST}."
-  ask "[Enter] once you've STARTED the send on the phone   (s=skip):"; read -r a; echo
-  if [ "$a" = s ]; then kill -INT "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null; record RECV "$transport" "$label" SKIP - "skipped"; return; fi
+  say "Receiver is up as ${YEL}'OQS Interop RX'${RST} and stays up for the whole block."
 
-  say "  Waiting for the transfer — press ${YEL}Enter${RST} anytime to stop waiting early."
-  # PASS requires the receiver to log completion AND the bytes on disk to stop
-  # growing. A merely-existing file is an IN-PROGRESS transfer — judging (and
-  # killing the receiver) on file existence aborts it mid-flight.
-  local waited=0 idle=0 got="" verdict="" note="" last_sz=-1 fin_at=-1
-  while :; do
-    local sz; sz=$(du -sb "$DL_DIR" 2>/dev/null | cut -f1); sz=${sz:-0}
-    if [ "$sz" != "$last_sz" ]; then last_sz="$sz"; idle=0; else idle=$((idle+2)); fi
-    if grep -qE 'Transfer finished|TEXT RECEIVED' "$log"; then
-      [ "$fin_at" -lt 0 ] && fin_at="$waited"
-      # finished: let writes settle, then judge
-      if [ "$idle" -ge 4 ] || [ $((waited - fin_at)) -ge 10 ]; then
-        got="$(find "$DL_DIR" -type f -size +0c 2>/dev/null | head -1)"
-        if [ -n "$got" ]; then verdict=PASS
-        else verdict=NOFILE; note="receiver reported finished but wrote NO file"; fi
-        break
+  local pl
+  for pl in "${PAYLOADS[@]}"; do
+    echo
+    say "— RECEIVE · $transport · ${YEL}$pl${RST} —"
+    say "Phone: Quick Share → ${YEL}Send${RST} → pick the $pl → choose 'OQS Interop RX'."
+    ask "[Enter] once you've STARTED the send on the phone   (s=skip):"; read -r a; echo
+    if [ "$a" = s ]; then record RECV "$transport" "$pl" SKIP - "skipped"; continue; fi
+
+    local off; off="$(stat -c%s "$log" 2>/dev/null || echo 0)"
+    local before; before="$(find "$DL_DIR" -type f 2>/dev/null | sort)"
+
+    say "  Waiting for the transfer — press ${YEL}Enter${RST} anytime to stop waiting early."
+    # PASS requires the receiver to log completion (in THIS cell's log slice)
+    # AND bytes on disk to stop growing; an existing file is an in-progress
+    # transfer, never a verdict. Timeout counts only idle seconds.
+    local waited=0 idle=0 verdict="" note="" last_sz=-1 fin_at=-1 got=""
+    while :; do
+      local sz; sz=$(du -sb "$DL_DIR" 2>/dev/null | cut -f1); sz=${sz:-0}
+      if [ "$sz" != "$last_sz" ]; then last_sz="$sz"; idle=0; else idle=$((idle+2)); fi
+      if tail -c "+$((off+1))" "$log" 2>/dev/null | grep -qE 'Transfer finished|TEXT RECEIVED'; then
+        [ "$fin_at" -lt 0 ] && fin_at="$waited"
+        if [ "$idle" -ge 4 ] || [ $((waited - fin_at)) -ge 10 ]; then
+          got="$(comm -13 <(printf '%s\n' "$before") <(find "$DL_DIR" -type f 2>/dev/null | sort) | head -1)"
+          if [ -n "$got" ] && [ -s "$got" ]; then verdict=PASS
+          else verdict=NOFILE; note="receiver reported finished but wrote NO new file"; fi
+          break
+        fi
       fi
+      [ "$idle" -ge "$RECV_TIMEOUT" ] && { verdict=TIMEOUT; break; }
+      if read -t 2 -N 1 -r _k 2>/dev/null; then verdict=STOP; break; fi
+      waited=$((waited+2)); printf '\r  …%ss (%s bytes on disk)   ' "$waited" "$sz"
+    done
+    echo
+    local med; med="$(tail -c "+$((off+1))" "$log" 2>/dev/null > "$WORK/.rslice"; detect_medium "$WORK/.rslice")"
+
+    if [ "$verdict" = PASS ]; then
+      ok "received $(basename "$got") ($(hsize "$got"))  (medium: $med)"
+      record RECV "$transport" "$pl" PASS "$med" "$(basename "$got")"
+    elif [ "$verdict" = NOFILE ]; then
+      bad "$note  (medium seen: $med)"
+      record RECV "$transport" "$pl" FAIL "$med" "$note"
+    else
+      bad "nothing completed on the PC."
+      ask "On the phone, did it show the send as DONE? [y/N]:"; read -r ph
+      if [[ "$ph" =~ ^[Yy] ]]; then record RECV "$transport" "$pl" FAIL "$med" "phone showed DONE but PC saved nothing"
+      else                         record RECV "$transport" "$pl" FAIL "$med" "phone did not complete / not started"; fi
     fi
-    # timeout counts only IDLE seconds — an actively-growing file resets it
-    [ "$idle" -ge "$RECV_TIMEOUT" ] && { verdict=TIMEOUT; break; }
-    if read -t 2 -N 1 -r _k 2>/dev/null; then verdict=STOP; break; fi
-    waited=$((waited+2)); printf '\r  …%ss (%s bytes on disk)   ' "$waited" "$sz"
-  done
-  echo
-  local med; med="$(detect_medium "$log")"
-  kill -INT "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null
-  # If a hosted-hotspot cell got killed hard, its DIRECT-* connection can
-  # linger and hijack later cells' IPs — tear any leftovers down.
-  local c
-  for c in $(nmcli -t -f NAME connection show --active 2>/dev/null | grep -i '^DIRECT-'); do
-    nmcli connection down "$c" >/dev/null 2>&1
   done
 
-  if [ "$verdict" = PASS ] && [ -n "$got" ]; then
-    ok "received $(basename "$got") ($(hsize "$got"))  (medium: $med)"
-    record RECV "$transport" "$label" PASS "$med" "$(basename "$got")"
-  elif [ "$verdict" = NOFILE ]; then
-    bad "$note  (medium seen: $med)"
-    record RECV "$transport" "$label" FAIL "$med" "$note (BLE receive/BWU gap)"
-  else
-    # user stopped early, or timed out — get the phone-side truth
-    bad "nothing saved on the PC."
-    ask "On the phone, did it show the send as DONE? [y/N]:"; read -r ph
-    if [[ "$ph" =~ ^[Yy] ]]; then record RECV "$transport" "$label" FAIL "$med" "phone showed DONE but PC saved nothing"
-    else                         record RECV "$transport" "$label" FAIL "$med" "phone did not complete / not started"; fi
-  fi
+  kill -INT "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null
+  teardown_hotspots
 }
 
-# ---- transport block -------------------------------------------------------
+# ---- transport block --------------------------------------------------------
 transport_block() {
-  local key="$1" name="$2" mediums="$3" phone_setup="$4"
+  local key="$1" name="$2" phone_setup="$3"
   [ -n "$ONLY_TRANSPORT" ] && [ "$ONLY_TRANSPORT" != "$key" ] && return
   head1 "TRANSPORT: $name"
   say "$phone_setup"
   ask "Set the phone as above, then [Enter] to begin this block (s=skip whole block):"
   read -r a; [ "$a" = s ] && return
 
-  if [ "$DO_SEND" = 1 ]; then
-    say "${DIM}--- SEND cells (phone on RECEIVE screen) ---${RST}"
-    for pl in "${PAYLOADS[@]}"; do run_send "$name" "$mediums" "$pl"; done
-  fi
-  if [ "$DO_RECV" = 1 ]; then
-    say "${DIM}--- RECEIVE cells (phone on SEND) ---${RST}"
-    for pl in "${PAYLOADS[@]}"; do run_receive "$name" "$pl"; done
-  fi
+  [ "$DO_SEND" = 1 ] && run_send_block "$name"
+  [ "$DO_RECV" = 1 ] && run_receive_block "$name"
 }
 
 # ---- final matrix ----------------------------------------------------------
@@ -303,10 +311,10 @@ print_matrix() {
     echo "open-quickshare interop test — $(date)"
     echo "phone filter: '${TARGET_NAME:-<any>}'   logs: $WORK"
     echo
-    printf '%-8s %-14s %-7s %-8s %-16s %s\n' DIR TRANSPORT PAYLOAD STATUS MEDIUM NOTE
-    printf '%-8s %-14s %-7s %-8s %-16s %s\n' ------- ------------- ------- ------- --------------- ----
+    printf '%-8s %-14s %-7s %-14s %-22s %s\n' DIR TRANSPORT PAYLOAD STATUS MEDIUM NOTE
+    printf '%-8s %-14s %-7s %-14s %-22s %s\n' ------- ------------- ------- ------------- --------------------- ----
     while IFS='|' read -r d t p s m n; do
-      printf '%-8s %-14s %-7s %-8s %-16s %s\n' "$d" "$t" "$p" "$s" "$m" "$n"
+      printf '%-8s %-14s %-7s %-14s %-22s %s\n' "$d" "$t" "$p" "$s" "$m" "$n"
     done < "$RESULTS"
     echo
     local pass fail skip
@@ -331,16 +339,17 @@ stop_app; ok "app stopped (adapter free)"
 gen_payloads
 
 # same-LAN first (easiest), then Wi-Fi Direct, then pure BLE
-transport_block lan    "same-LAN"     "5,8,3,10" \
-  "Phone ON the SAME Wi-Fi network as this PC (large files should upgrade to Wi-Fi LAN; small ones stay on BLE by design)."
-transport_block direct "Wi-Fi Direct" "5,8,3,10" \
-  "Phone Wi-Fi RADIO ON but NOT connected to any network (forget/disable the network; large files use Wi-Fi Direct hosted by the phone)."
-transport_block ble    "pure-BLE"     "10"   \
-  "Phone Wi-Fi can be anything — we advertise BLE only, so everything stays on Bluetooth (the >1MB mp4 is expected to be refused up front)."
+transport_block lan    "same-LAN" \
+  "Phone ON the SAME Wi-Fi network as this PC (large files should upgrade to Wi-Fi; small ones stay on BLE by design)."
+transport_block direct "Wi-Fi Direct" \
+  "Phone Wi-Fi RADIO ON but NOT connected to any network (forget/disable the network; large transfers use a Wi-Fi Direct group)."
+transport_block ble    "pure-BLE" \
+  "Phone Wi-Fi fully OFF (radio off). Everything stays on Bluetooth; large receives may still see the phone force a hotspot."
 
 print_matrix
 
 head1 "Restarting the app"
+teardown_hotspots
 start_app; sleep 3
 [ -n "$(app_pids)" ] && ok "app relaunched" || say "${DIM}app not detected — launch it yourself if needed${RST}"
 say "Done."

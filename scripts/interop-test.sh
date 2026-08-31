@@ -162,7 +162,7 @@ detect_medium() {
   if   grep -qiE 'too large to send over Bluetooth' "$log"; then echo "REFUSED-too-big"
   elif grep -qE 'upgraded to Wi-Fi-LAN; payload continues over TCP' "$log"; then echo "Wi-Fi LAN"
   elif grep -qE 'upgraded to.*(hotspot|Wi-Fi Direct)|joined.*(hotspot|group)' "$log"; then echo "Wi-Fi Direct"
-  elif grep -qE "hosting hotspot .* for the sender to join" "$log" && grep -qE 'phone connected over TCP' "$log"; then echo "Wi-Fi Direct (we host)"
+  elif grep -qE "hosting hotspot .* for the sender to join|Hotspot: 'DIRECT-.*' up on" "$log"; then echo "Wi-Fi Direct (we host)"
   elif grep -qE 'phone connected over TCP' "$log"; then echo "Wi-Fi LAN"
   elif grep -qE 'UPGRADE_FAILURE; continuing over BLE|stays on BLE|BLE only, no Wi-Fi upgrade' "$log"; then echo "BLE"
   elif grep -qE 'SendingFiles|ReceivingFiles' "$log"; then echo "BLE"
@@ -226,19 +226,28 @@ run_receive() {
   ask "[Enter] once you've STARTED the send on the phone   (s=skip):"; read -r a; echo
   if [ "$a" = s ]; then kill -INT "$rxpid" 2>/dev/null; wait "$rxpid" 2>/dev/null; record RECV "$transport" "$label" SKIP - "skipped"; return; fi
 
-  say "  Waiting for the file — press ${YEL}Enter${RST} anytime to stop waiting early."
-  local waited=0 got="" verdict="" note="" fin=-1
-  while [ "$waited" -lt "$RECV_TIMEOUT" ]; do
-    got="$(find "$DL_DIR" -type f -size +0c 2>/dev/null | head -1)"
-    if [ -n "$got" ]; then sleep 2; got="$(find "$DL_DIR" -type f -size +0c 2>/dev/null | head -1)"; verdict=PASS; break; fi
-    # Receiver finished the session but wrote nothing -> fast-fail after a grace
-    # window instead of blocking for the whole timeout.
-    if grep -q 'Transfer finished' "$log"; then
-      [ "$fin" -lt 0 ] && fin="$waited"
-      if [ $((waited - fin)) -ge 8 ]; then verdict=NOFILE; note="receiver reported finished but wrote NO file"; break; fi
+  say "  Waiting for the transfer — press ${YEL}Enter${RST} anytime to stop waiting early."
+  # PASS requires the receiver to log completion AND the bytes on disk to stop
+  # growing. A merely-existing file is an IN-PROGRESS transfer — judging (and
+  # killing the receiver) on file existence aborts it mid-flight.
+  local waited=0 idle=0 got="" verdict="" note="" last_sz=-1 fin_at=-1
+  while :; do
+    local sz; sz=$(du -sb "$DL_DIR" 2>/dev/null | cut -f1); sz=${sz:-0}
+    if [ "$sz" != "$last_sz" ]; then last_sz="$sz"; idle=0; else idle=$((idle+2)); fi
+    if grep -qE 'Transfer finished|TEXT RECEIVED' "$log"; then
+      [ "$fin_at" -lt 0 ] && fin_at="$waited"
+      # finished: let writes settle, then judge
+      if [ "$idle" -ge 4 ] || [ $((waited - fin_at)) -ge 10 ]; then
+        got="$(find "$DL_DIR" -type f -size +0c 2>/dev/null | head -1)"
+        if [ -n "$got" ]; then verdict=PASS
+        else verdict=NOFILE; note="receiver reported finished but wrote NO file"; fi
+        break
+      fi
     fi
+    # timeout counts only IDLE seconds — an actively-growing file resets it
+    [ "$idle" -ge "$RECV_TIMEOUT" ] && { verdict=TIMEOUT; break; }
     if read -t 2 -N 1 -r _k 2>/dev/null; then verdict=STOP; break; fi
-    waited=$((waited+2)); printf '\r  …%ss  ' "$waited"
+    waited=$((waited+2)); printf '\r  …%ss (%s bytes on disk)   ' "$waited" "$sz"
   done
   echo
   local med; med="$(detect_medium "$log")"
@@ -319,9 +328,9 @@ stop_app; ok "app stopped (adapter free)"
 gen_payloads
 
 # same-LAN first (easiest), then Wi-Fi Direct, then pure BLE
-transport_block lan    "same-LAN"     "5,10" \
+transport_block lan    "same-LAN"     "5,8,3,10" \
   "Phone ON the SAME Wi-Fi network as this PC (large files should upgrade to Wi-Fi LAN; small ones stay on BLE by design)."
-transport_block direct "Wi-Fi Direct" "5,10" \
+transport_block direct "Wi-Fi Direct" "5,8,3,10" \
   "Phone Wi-Fi RADIO ON but NOT connected to any network (forget/disable the network; large files use Wi-Fi Direct hosted by the phone)."
 transport_block ble    "pure-BLE"     "10"   \
   "Phone Wi-Fi can be anything — we advertise BLE only, so everything stays on Bluetooth (the >1MB mp4 is expected to be refused up front)."

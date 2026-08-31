@@ -28,6 +28,11 @@ function _displayedItems(vm: TauriVM): Array<DisplayedItem> {
 		// revealing the BLE card again.
 		const dupIdx = ndisplayed.findIndex((nel) => nel.endpoint && nel.name === card.name);
 		if (dupIdx !== -1) {
+			// Never swap the card's identity while a connection to it is in
+			// flight: the user's next click would fire a SECOND, parallel send
+			// over the other transport, and two simultaneous sessions wedge
+			// the phone's Nearby stack.
+			if (vm.connectingId === ndisplayed[dupIdx].id) return;
 			const existing = vm.endpointsInfo.find((e) => e.id === ndisplayed[dupIdx].id);
 			const existingIsBle = !!existing?.ble_addr;
 			const thisIsBle = !!el.ble_addr;
@@ -156,6 +161,12 @@ function removeRequest(vm: TauriVM, id: string) {
 
 async function sendInfo(vm: TauriVM, eid: string) {
 	if (vm.outboundPayload === undefined) return;
+
+	// One outbound at a time: a second click while a connect/handshake is in
+	// flight launches a parallel session that wedges the phone's Nearby stack
+	// (drops right after paired-key until it recovers). connectingId clears
+	// on the transfer's first state event or its failure.
+	if (vm.connectingId !== null) return;
 
 	const ei = vm.endpointsInfo.find((el) => el.id === eid);
 	if (!ei) return;

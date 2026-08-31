@@ -231,6 +231,25 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
         info!("BWU: will re-offer the Wi-Fi upgrade in {delay}s");
     }
 
+    /// A WIFI_LAN offer failed (or timed out). The phone's share screen drops
+    /// its Wi-Fi during discovery and rejoins a few seconds after the
+    /// connection lands — an early failure usually just means "not back on
+    /// the network yet". Re-offer the LAN path a couple of times before
+    /// escalating to the hotspot, which drops this machine off its own
+    /// network mid-transfer.
+    fn bwu_failure_fallback(&mut self) {
+        const LAN_RETRIES: u8 = 2;
+        if crate::utils::local_ipv4().is_some() && self.bwu_attempts < LAN_RETRIES {
+            self.bwu_try_hotspot = false;
+            self.schedule_bwu_retry();
+        } else {
+            self.bwu_try_hotspot = true;
+            self.bwu_attempts += 1;
+            self.bwu_retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(2));
+            info!("BWU: falling back to the hotspot path in 2s");
+        }
+    }
+
     /// True once a scheduled upgrade re-offer is due (consumes the schedule).
     pub fn bwu_retry_due(&mut self) -> bool {
         match self.bwu_retry_at {
@@ -1981,8 +2000,7 @@ impl InboundRequest<crate::hdl::MigratableStream> {
                     }
                     Err(e) => {
                         warn!("BWU: TCP accept failed ({e}); staying on BLE");
-                        self.bwu_try_hotspot = true;
-                        self.schedule_bwu_retry();
+                        self.bwu_failure_fallback();
                         return Ok(());
                     }
                 },
@@ -2000,8 +2018,7 @@ impl InboundRequest<crate::hdl::MigratableStream> {
                         .unwrap_or(false);
                     if is_upgrade_failure {
                         warn!("BWU: phone reported UPGRADE_FAILURE; continuing over BLE");
-                        self.bwu_try_hotspot = true;
-                        self.schedule_bwu_retry();
+                        self.bwu_failure_fallback();
                         return Ok(());
                     }
                     // Keep the handshake moving (paired-key frames, keep-alives,
@@ -2012,8 +2029,7 @@ impl InboundRequest<crate::hdl::MigratableStream> {
                 }
                 _ = tokio::time::sleep_until(deadline) => {
                     warn!("BWU: no TCP upgrade within timeout; staying on BLE");
-                    self.bwu_try_hotspot = true;
-                    self.schedule_bwu_retry();
+                    self.bwu_failure_fallback();
                     return Ok(());
                 }
             }

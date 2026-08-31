@@ -13,13 +13,31 @@ function _displayedItems(vm: TauriVM): Array<DisplayedItem> {
 		const idx = ndisplayed.findIndex((nel) => el.id == nel.id);
 		if (idx !== -1) return;
 
-		ndisplayed.push({
+		const card: DisplayedItem = {
 			id: el.id,
 			name: el.name ?? 'Unknown',
 			deviceType: el.rtype ?? 'Unknown',
 			endpoint: true,
 			connecting: vm.connectingId === el.id,
-		})
+		};
+
+		// One device, one card: the same phone is often discovered over both
+		// mDNS (ip:port) and BLE (ble://name). Prefer the Wi-Fi entry — direct
+		// TCP beats a BLE handshake plus upgrade dance — and if the Wi-Fi one
+		// goes stale (device left the network) its failed connect removes it,
+		// revealing the BLE card again.
+		const dupIdx = ndisplayed.findIndex((nel) => nel.endpoint && nel.name === card.name);
+		if (dupIdx !== -1) {
+			const existing = vm.endpointsInfo.find((e) => e.id === ndisplayed[dupIdx].id);
+			const existingIsBle = !!existing?.ble_addr;
+			const thisIsBle = !!el.ble_addr;
+			if (existingIsBle && !thisIsBle) {
+				ndisplayed.splice(dupIdx, 1, card); // Wi-Fi replaces BLE
+			}
+			return; // never show the same device twice
+		}
+
+		ndisplayed.push(card);
 	});
 
 	vm.requests.filter((el) => stateToDisplay.includes(el.state ?? 'Initial')).forEach((el) => {

@@ -159,6 +159,22 @@ teardown_hotspots() {
   done
 }
 
+reset_adapter() {
+  # Clear wedged BlueZ discovery state ("Operation already in progress" /
+  # D-Bus timeouts) left over from earlier churn. Passive listening still
+  # works when wedged, but StartDiscovery never succeeds again until a
+  # power cycle — so every send would report NoReceiver.
+  say "${DIM}power-cycling the Bluetooth adapter for a clean slate…${RST}"
+  timeout 8 bluetoothctl power off >/dev/null 2>&1
+  sleep 1
+  timeout 8 bluetoothctl power on >/dev/null 2>&1
+  sleep 2
+}
+
+adapter_wedged() {
+  grep -qE 'Operation already in progress|org.freedesktop.DBus.Error.Timeout' "$1" 2>/dev/null
+}
+
 # ---- transport detection from a log (or log slice) --------------------------
 detect_medium() {
   local log="$1"
@@ -198,6 +214,11 @@ run_send_block() {
   STEP=1 RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
     "$EX_DIR/app_send" "${flist[@]}" 2>"$log" | tee "$out"
   echo
+
+  if adapter_wedged "$log"; then
+    bad "BlueZ discovery wedged during this block — resetting the adapter before continuing"
+    reset_adapter
+  fi
 
   # Parse per-file results; slice the shared log per attempted send for medium.
   local attempt=0
@@ -326,7 +347,41 @@ print_matrix() {
   ok "report saved: $REPORT"
 }
 
-cleanup() { kill $(jobs -p) 2>/dev/null; }
+# Ctrl+C (or TERM) at ANY point finalizes instead of discarding: it sweeps
+# results the engine printed but the script hadn't parsed yet, prints and
+# saves the matrix of everything done so far, and relaunches the app.
+FINALIZED=0
+finalize() {
+  [ "$FINALIZED" = 1 ] && exit 130
+  FINALIZED=1
+  trap - INT TERM
+  kill $(jobs -p) 2>/dev/null
+  local o t f res pl _tag
+  for o in "$WORK"/send-*.out; do
+    [ -f "$o" ] || continue
+    t="$(basename "$o")"; t="${t#send-}"; t="${t%.out}"
+    while IFS='|' read -r _tag f res; do
+      pl="$(basename "$f")"; pl="${pl%%.*}"; [ "$pl" = big ] && pl=mp4
+      grep -q "^SEND|$t|$pl|" "$RESULTS" 2>/dev/null && continue
+      case "$res" in
+        Finished) record SEND "$t" "$pl" PASS "?" "finished (phone-side unconfirmed; run interrupted)";;
+        Skipped)  record SEND "$t" "$pl" SKIP - "skipped";;
+        *)        record SEND "$t" "$pl" FAIL "?" "final state $res (run interrupted)";;
+      esac
+    done < <(grep -a '^RESULT|' "$o")
+  done
+  teardown_hotspots
+  if [ -s "$RESULTS" ]; then
+    echo; say "${YEL}Interrupted — saving the results gathered so far.${RST}"
+    print_matrix
+  else
+    say "interrupted before any cell finished — nothing to report"
+  fi
+  start_app
+  exit 130
+}
+trap finalize INT TERM
+cleanup() { [ "$FINALIZED" = 1 ] || kill $(jobs -p) 2>/dev/null; }
 trap cleanup EXIT
 
 # ---- run -------------------------------------------------------------------
@@ -336,6 +391,8 @@ say "Bluetooth ON. Phone unlocked. You'll be prompted before every phone action.
 ask "[Enter] to start:"; read -r _
 
 stop_app; ok "app stopped (adapter free)"
+reset_adapter
+rm -f "$WORK"/send-*.out   # stale engine outputs would pollute an interrupt sweep
 gen_payloads
 
 # same-LAN first (easiest), then Wi-Fi Direct, then pure BLE

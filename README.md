@@ -118,9 +118,10 @@ Requirements
 Limitations
 --------------------------
 
-- **Tested only against Pixel phones** (Pixel 9 Pro, GmsCore as of Aug 2026). Other Android
-  devices speak the same protocol and should work, but are unverified. Samsung devices ship a
-  modified Quick Share and may behave differently.
+- **Tested against Pixel phones** (Pixel 9 Pro, GmsCore as of Aug 2026) **and Quick Share
+  for Windows** (send and receive, Windows 11). Other Android devices speak the same
+  protocol and should work, but are unverified. Samsung devices ship a modified Quick Share
+  and may behave differently.
 - **Large no‑network transfers need the phone's Wi‑Fi radio on** (it does *not* need to be
   connected to anything). Android normally turns the radio on by itself when the Quick Share
   receive screen opens, so this takes care of itself — but in cases where it doesn't (older
@@ -228,11 +229,12 @@ and payloads above ~1 MB aren't attempted over pure Bluetooth: the transfer is r
 front rather than left to stall. Enable Wi‑Fi on the phone — it does *not* need to join any
 network — and retry.
 
-### Sending to a Windows PC fails after Accept
+### Sending to a Windows PC
 
-Windows Quick Share receivers are largely untested: in testing, the transfer completed
-from this side but Windows showed "Can't complete transfer" at its finalization step.
-Android phones are the supported target for now; Windows interop is on the list.
+Works (send and receive) against Quick Share for Windows. One Windows quirk to know:
+its accept prompt silently expires after about a minute — if the receiver waits too
+long, Windows shows "Can't complete transfer" for its own timeout. Send again and
+accept promptly.
 
 ### My firewall is blocking the connection
 

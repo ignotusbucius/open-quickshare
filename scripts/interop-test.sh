@@ -164,11 +164,29 @@ reset_adapter() {
   # D-Bus timeouts) left over from earlier churn. Passive listening still
   # works when wedged, but StartDiscovery never succeeds again until a
   # power cycle — so every send would report NoReceiver.
-  say "${DIM}power-cycling the Bluetooth adapter for a clean slate…${RST}"
+  #
+  # Only call this when the adapter is actually wedged: a run started ~30s
+  # after a power cycle showed every handshake frame quantized to ~2s (vs
+  # 60-230ms on a settled adapter), tripping the phone's ~7s handshake
+  # deadline. Hence the long settle below.
+  say "${DIM}power-cycling the Bluetooth adapter (wedged) — then settling…${RST}"
   timeout 8 bluetoothctl power off >/dev/null 2>&1
-  sleep 1
-  timeout 8 bluetoothctl power on >/dev/null 2>&1
   sleep 2
+  timeout 8 bluetoothctl power on >/dev/null 2>&1
+  sleep 10
+}
+
+adapter_ok() {
+  # Cheap health probe: can we start (and stop) a discovery at all?
+  local o rc
+  o="$(timeout 8 bluetoothctl --timeout 2 scan on 2>&1)"; rc=$?
+  timeout 4 bluetoothctl scan off >/dev/null 2>&1
+  [ "$rc" = 124 ] && return 1                       # D-Bus call hung: wedged
+  if printf '%s' "$o" | grep -qi 'Failed to start discovery'; then
+    printf '%s' "$o" | grep -qi 'InProgress' && return 0   # someone else scanning: fine
+    return 1
+  fi
+  return 0
 }
 
 adapter_wedged() {
@@ -391,7 +409,11 @@ say "Bluetooth ON. Phone unlocked. You'll be prompted before every phone action.
 ask "[Enter] to start:"; read -r _
 
 stop_app; ok "app stopped (adapter free)"
-reset_adapter
+if adapter_ok; then
+  ok "Bluetooth adapter healthy (no reset — a fresh power cycle slows the link)"
+else
+  reset_adapter
+fi
 rm -f "$WORK"/send-*.out   # stale engine outputs would pollute an interrupt sweep
 gen_payloads
 

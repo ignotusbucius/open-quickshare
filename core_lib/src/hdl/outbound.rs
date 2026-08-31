@@ -627,6 +627,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             .v1
             .as_ref()
             .ok_or_else(|| anyhow!("Missing required fields"))?;
+        debug!(
+            "outbound recv offline frame: type={:?} (state={:?})",
+            v1_frame.r#type(),
+            self.state.state
+        );
         match v1_frame.r#type() {
             location_nearby_connections::v1_frame::FrameType::PayloadTransfer => {
                 trace!("Received FrameType::PayloadTransfer");
@@ -725,6 +730,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             .v1
             .as_ref()
             .ok_or_else(|| anyhow!("Missing required fields"))?;
+        debug!(
+            "outbound recv sharing frame: type={:?} (state={:?})",
+            v1_frame.r#type(),
+            self.state.state
+        );
 
         if v1_frame.r#type() == sharing_nearby::v1_frame::FrameType::Cancel {
             info!("Transfer canceled");

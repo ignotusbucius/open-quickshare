@@ -6,9 +6,9 @@
 #   Direction: SEND (PC -> phone)  and  RECEIVE (phone -> PC)
 #   Transport: same-LAN Wi-Fi · Wi-Fi Direct (phone hosts) · pure BLE
 #
-# It drives the REAL transfer code through the headless examples
-# (tx_send / rx_service, same core_lib paths the app uses), so no GUI is
-# involved and nothing can crash a webview mid-test. You only touch the phone
+# SEND cells drive the APP'S OWN engine headlessly (app_send: the same RQS
+# service, discovery, dial ladder and medium logic the app runs); RECEIVE cells
+# run the same engine via rx_service. No GUI involved. You only touch the phone
 # when prompted. Each cell reports PASS/FAIL and the transport that was
 # ACTUALLY used, then a summary matrix is printed and saved.
 #
@@ -34,7 +34,6 @@ PAYLOAD_DIR="$WORK/payloads"
 DL_DIR="$WORK/received"                       # rx_service download target
 REPORT="$WORK/report-$(date +%Y%m%d-%H%M%S).txt"
 RECV_TIMEOUT="${RECV_TIMEOUT:-60}"           # seconds to wait for a phone->PC file
-SEND_SCAN="${SEND_SCAN:-1}"                   # tx_send does its own 6x20s scan
 
 BLU=$'\e[1;34m'; GRN=$'\e[1;32m'; RED=$'\e[1;31m'; YEL=$'\e[1;33m'; DIM=$'\e[2m'; RST=$'\e[0m'
 say()  { printf '%s\n' "$*"; }
@@ -71,14 +70,14 @@ say "${DIM}Using phone filter: '${TARGET_NAME:-<any>}'${RST}"
 
 # ---- locate / verify example binaries --------------------------------------
 need_build=0
-for b in tx_send rx_service; do [ -x "$EX_DIR/$b" ] || need_build=1; done
+for b in app_send rx_service; do [ -x "$EX_DIR/$b" ] || need_build=1; done
 if [ "$need_build" = 1 ]; then
-  head1 "Building test binaries (tx_send, rx_service)"
+  head1 "Building test binaries (app_send, rx_service)"
   distrobox enter --name "$CONTAINER" -- bash -lc \
-    "cd '$REPO/core_lib' && cargo build --release --features experimental --example tx_send --example rx_service" \
+    "cd '$REPO/core_lib' && cargo build --release --features experimental --example app_send --example rx_service" \
     || { bad "example build failed"; exit 1; }
 fi
-for b in tx_send rx_service; do
+for b in app_send rx_service; do
   [ -x "$EX_DIR/$b" ] || { bad "missing $EX_DIR/$b"; exit 1; }
 done
 ok "test binaries ready"
@@ -181,26 +180,19 @@ run_send() {
   say "Phone: make sure it is on the Quick Share ${YEL}receive screen (Everyone)${RST}, then it will show an Accept prompt."
   ask "[Enter]=run   s=skip:"; read -r a; [ "$a" = s ] && { record SEND "$transport" "$label" SKIP - "skipped"; return; }
 
-  # TRUE app parity (manager.rs): payloads ≤ 1 MB advertise BLE_L2CAP only
-  # ([10]); larger payloads advertise the block's Wi-Fi set. Advertising Wi-Fi
-  # mediums on a small send is something the app never does — and the phone
-  # can hang up right after paired-key when we do.
-  local eff_mediums="$mediums"
-  [ "$(stat -c%s "$file")" -le 1048576 ] && eff_mediums="10"
-  say "${DIM}  mediums: [$eff_mediums]${RST}"
-
-  # The headless tx_send uses a single-shot BLE dial (no retry ladder like the
-  # app), and the phone's L2CAP PSM rotates, so a fresh scan+dial can miss.
-  # Retry the whole send a couple times on a dial miss before giving up.
+  # app_send drives the APP'S OWN engine (RQS + manager.rs): its discovery,
+  # sender-side BLE advertising, dial retry ladder, and size-gated medium
+  # selection. Nothing here reimplements the app — $mediums is intentionally
+  # unused; the engine decides exactly as the app does.
   local rc=1 attempt
-  for attempt in 1 2 3; do
-    PACKET_SEND_MEDIUMS="$eff_mediums" RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
-      "$EX_DIR/tx_send" "$file" >"$log" 2>&1
+  for attempt in 1 2; do
+    RUST_LOG="info,rqs_lib=debug,mdns_sd=error" \
+      "$EX_DIR/app_send" "$file" >"$log" 2>&1
     rc=$?
     grep -q 'final state Finished' "$log" && break
     grep -qiE 'too large to send over Bluetooth' "$log" && break
-    grep -qiE "couldn't establish a live L2CAP|no receiver found" "$log" || break
-    [ "$attempt" -lt 3 ] && { say "  ${DIM}BLE dial miss (attempt $attempt/3); re-scanning…${RST}"; sleep 3; }
+    grep -qiE 'no matching receiver found' "$log" || break
+    [ "$attempt" -lt 2 ] && { say "  ${DIM}receiver not discovered (attempt $attempt/2); retrying…${RST}"; sleep 3; }
   done
   local med; med="$(detect_medium "$log")"
 

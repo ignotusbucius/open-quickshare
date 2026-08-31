@@ -142,7 +142,11 @@
 
 						<div v-else-if="item.state === 'Rejected'">
 							<p class="mt-2">
-								Transfer rejected
+								Transfer declined
+							</p>
+							<p class="text-xs text-gray-500 dark:text-neutral-400 mt-1">
+								The other device declined — or its accept prompt timed out
+								(Windows expires it after about a minute). Retry and accept promptly.
 							</p>
 							<div class="flex flex-row justify-end gap-4 mt-1">
 								<p

@@ -1745,13 +1745,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             | sharing_nearby::connection_response_frame::Status::NotEnoughSpace
             | sharing_nearby::connection_response_frame::Status::UnsupportedAttachmentType
             | sharing_nearby::connection_response_frame::Status::TimedOut => {
+                // An explicit answer from the peer (declined, out of space, or
+                // its accept prompt timed out — Windows expires the prompt
+                // after ~60s) — surface it as Rejected, not "unexpected
+                // disconnection".
                 warn!(
                     "Cannot process: consent denied: {:?}",
                     v1_frame.connection_response.as_ref().unwrap().status()
                 );
                 self.update_state(
                     |e| {
-                        e.state = TransferState::Disconnected;
+                        e.state = TransferState::Rejected;
                     },
                     true,
                 )

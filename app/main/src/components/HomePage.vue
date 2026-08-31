@@ -133,7 +133,12 @@
 
 						<div v-else-if="item.state === 'Disconnected'">
 							<p class="mt-2">
-								Unexpected disconnection
+								{{ handshakeDrops.has(item.id) ? 'The phone dropped the connection mid-handshake' : 'Unexpected disconnection' }}
+							</p>
+							<p v-if="handshakeDrops.has(item.id)" class="text-xs text-gray-500 dark:text-neutral-400 mt-1">
+								Its Wi-Fi radio is likely busy scanning for networks, which slows Bluetooth
+								down until the phone gives up. Connect the phone to Wi-Fi (ideally the same
+								network), or leave it on the receive screen for a minute, then retry.
 							</p>
 							<div class="flex flex-row justify-end gap-4 mt-1">
 								<p
@@ -217,6 +222,7 @@ export default {
 			requests: ref<ChannelMessage[]>([]),
 			endpointsInfo: ref<EndpointInfo[]>([]),
 			toDelete: ref<ToDelete[]>([]),
+			handshakeDrops: new Set<string>(),
 			outboundPayload: ref<OutboundPayload | undefined>(),
 
 			// eslint-disable-next-line no-undef
@@ -275,10 +281,21 @@ export default {
 					const idx = this.requests.findIndex((el) => el.id === cm.id);
 
 					if (cm.state === "Disconnected") {
+						// A drop before SendingFiles on an outbound transfer is the
+						// phone abandoning the handshake — nearly always because its
+						// unassociated Wi-Fi radio is scanning and starving Bluetooth
+						// (it never even shows a consent prompt). Tag it so the card
+						// can explain instead of shrugging "unexpected".
+						const prevState = idx !== -1 ? this.requests.at(idx)?.state : undefined;
+						if (cm.rtype === 'Outbound' && prevState !== 'SendingFiles' && prevState !== 'Finished') {
+							this.handshakeDrops.add(cm.id);
+						}
 						this.toDelete.push({
 							id: cm.id,
 							triggered: new Date().getTime()
 						});
+					} else {
+						this.handshakeDrops.delete(cm.id);
 					}
 
 					// TODO - Automatically open || copy to clipboard + toast

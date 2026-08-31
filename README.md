@@ -121,12 +121,11 @@ Limitations
 - **Tested only against Pixel phones** (Pixel 9 Pro, GmsCore as of Aug 2026). Other Android
   devices speak the same protocol and should work, but are unverified. Samsung devices ship a
   modified Quick Share and may behave differently.
-- **The phone's Wi‑Fi radio must be enabled** for large no‑network transfers (it does *not*
-  need to be connected to anything). With the radio fully off, Android refuses all Wi‑Fi
-  upgrades and only small payloads (≈1 MB) are accepted over pure BLE — the same wall the
-  official clients hit, which they dodge by auto‑enabling the radio from inside the OS.
-  In practice recent Android versions re‑enable the radio themselves when the Quick Share
-  receive screen opens, so this rarely needs manual attention.
+- **Large no‑network transfers need the phone's Wi‑Fi radio on** (it does *not* need to be
+  connected to anything). Android normally turns the radio on by itself when the Quick Share
+  receive screen opens, so this takes care of itself — but in cases where it doesn't (older
+  Android versions, or the radio toggled off mid‑session), Android refuses all Wi‑Fi upgrades
+  and only small payloads (≈1 MB) go through over pure BLE.
 - **"Everyone" visibility only.** Contacts / Your‑devices modes require Google‑account
   certificate exchange that a third‑party client cannot perform.
 - **Hosting a hotspot can briefly take the PC's Wi‑Fi off its network** (single‑channel

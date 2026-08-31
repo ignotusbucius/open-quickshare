@@ -518,6 +518,9 @@ export default {
 			}
 		},
 		openUrl: async function(url: string) {
+			// The toast doubles as proof the click handler fired — a launch
+			// problem after this point shows up in the backend log.
+			this.toastStore.addToast("Opening…", ToastType.Info);
 			try {
 				// Direct xdg-open via a Rust command — the shell plugin's open()
 				// silently rejects without a configured scope.

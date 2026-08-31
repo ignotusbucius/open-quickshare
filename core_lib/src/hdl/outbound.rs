@@ -1543,14 +1543,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                         Some(i) => i,
                         None => {
                             info!("All files have been transferred");
-                            // Send our disconnection frame, then wait for the receiver to
-                            // finish writing the payload and close the connection before we
-                            // declare the transfer Finished. If we tear the TCP socket down
-                            // the instant the last chunk is written (which a one-shot caller
-                            // does as soon as it sees Finished), the phone loses the
-                            // connection mid-finalization and reports "can't transfer files".
-                            self.disconnection().await?;
-                            self.wait_for_peer_close(Duration::from_secs(5)).await;
+                            // Let the RECEIVER hang up first. Windows finalizes the share
+                            // after the payload completes, and a DISCONNECTION frame from
+                            // us in that window makes it abort with "Can't complete
+                            // transfer" (observed: it slams the socket shut the same
+                            // second ours lands). Android receivers close / send their own
+                            // disconnection within ~1s of the last chunk, so waiting first
+                            // costs nothing there. Only if the peer holds the socket open
+                            // past the grace period do we announce our own disconnection
+                            // (the previous behavior) so nobody waits on us forever.
+                            let peer_closed =
+                                self.wait_for_peer_close(Duration::from_secs(8)).await;
+                            if !peer_closed {
+                                debug!("peer still connected after grace; sending disconnection");
+                                self.disconnection().await?;
+                                self.wait_for_peer_close(Duration::from_secs(2)).await;
+                            }
                             self.update_state(
                                 |e| {
                                     e.state = TransferState::Finished;
@@ -1807,8 +1815,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
     /// return as soon as the peer closes (EOF) or `grace` elapses. This prevents
     /// a fast caller from ripping the TCP socket down before the phone has
     /// finalized the transfer.
-    async fn wait_for_peer_close(&mut self, grace: Duration) {
-        let _ = tokio::time::timeout(grace, async {
+    /// Drain incoming frames until the peer closes the connection or `grace`
+    /// elapses. Returns `true` if the peer actually closed (EOF observed).
+    async fn wait_for_peer_close(&mut self, grace: Duration) -> bool {
+        tokio::time::timeout(grace, async {
             let mut length_buf = [0u8; 4];
             loop {
                 if stream_read_exact(&mut self.socket, &mut length_buf)
@@ -1831,7 +1841,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 // Discard; keep draining until the peer closes or grace elapses.
             }
         })
-        .await;
+        .await
+        .is_ok()
     }
 
     async fn finalize_key_exchange(

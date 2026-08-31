@@ -164,6 +164,9 @@ pub struct InboundRequest<S = TcpStream> {
     /// Wi-Fi upgrade retries used so far (the phone's Wi-Fi often returns a
     /// few seconds into a BLE-only transfer).
     bwu_attempts: u8,
+    /// WIFI_LAN offers made after the user accepted; caps the post-consent
+    /// delay before falling back to the hotspot.
+    post_accept_lan_tries: u8,
     /// When to re-offer the Wi-Fi upgrade, if scheduled.
     bwu_retry_at: Option<tokio::time::Instant>,
     /// The sender's advertised LAN address (from its ConnectionRequest's
@@ -197,6 +200,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             bwu_tcp_port: None,
             bwu_pending: false,
             bwu_attempts: 0,
+            post_accept_lan_tries: 0,
             bwu_retry_at: None,
             remote_ip: None,
             bwu_try_hotspot: false,
@@ -234,17 +238,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
     /// A WIFI_LAN offer failed (or timed out). The phone's share screen drops
     /// its Wi-Fi during discovery and rejoins a few seconds after the
     /// connection lands — an early failure usually just means "not back on
-    /// the network yet". Re-offer the LAN path a couple of times before
-    /// escalating to the hotspot, which drops this machine off its own
-    /// network mid-transfer.
+    /// the network yet". The hotspot can't start before the user accepts
+    /// anyway (consent gate), so LAN re-offers during the consent window are
+    /// free; after acceptance one quick LAN attempt is allowed before the
+    /// disruptive hotspot, keeping the genuinely-LAN-less case only a couple
+    /// of seconds slower than escalating immediately.
     fn bwu_failure_fallback(&mut self) {
-        const LAN_RETRIES: u8 = 2;
-        if crate::utils::local_ipv4().is_some() && self.bwu_attempts < LAN_RETRIES {
+        // Guard the one-time initial path pick in do_bwu.
+        self.bwu_attempts = self.bwu_attempts.saturating_add(1);
+        let accepted = self.state.state == TransferState::ReceivingFiles;
+        let lan_plausible = crate::utils::local_ipv4().is_some();
+        if lan_plausible && !accepted {
             self.bwu_try_hotspot = false;
-            self.schedule_bwu_retry();
+            self.bwu_retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(4));
+            info!("BWU: will re-offer WIFI_LAN in 4s (hotspot is gated on consent anyway)");
+        } else if lan_plausible && self.post_accept_lan_tries == 0 {
+            self.post_accept_lan_tries += 1;
+            self.bwu_try_hotspot = false;
+            self.bwu_retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(2));
+            info!("BWU: one more WIFI_LAN offer in 2s, then the hotspot");
         } else {
             self.bwu_try_hotspot = true;
-            self.bwu_attempts += 1;
             self.bwu_retry_at = Some(tokio::time::Instant::now() + Duration::from_secs(2));
             info!("BWU: falling back to the hotspot path in 2s");
         }

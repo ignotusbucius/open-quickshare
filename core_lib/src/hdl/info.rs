@@ -63,6 +63,10 @@ pub struct TransferMetadata {
     pub payload_preview: Option<String>,
     pub payload: Option<TransferPayload>,
 
+    /// Directory the received files were written into (inbound file
+    /// transfers only) — lets the UI offer an "Open folder" action.
+    pub destination: Option<String>,
+
     pub total_bytes: u64,
     pub ack_bytes: u64,
 }

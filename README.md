@@ -200,6 +200,12 @@ the PC is unaffected — the phone drives that direction and it works even mid�
 The phone's Wi‑Fi radio is off, so no Wi‑Fi upgrade is possible (see Limitations). Enable
 Wi‑Fi on the phone — it does *not* need to join any network — and retry.
 
+### Sending to a Windows PC fails after Accept
+
+Windows Quick Share receivers are largely untested: in testing, the transfer completed
+from this side but Windows showed "Can't complete transfer" at its finalization step.
+Android phones are the supported target for now; Windows interop is on the list.
+
 ### My firewall is blocking the connection
 
 For same‑network transfers you can pin the app's port in

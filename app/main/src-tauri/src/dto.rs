@@ -46,6 +46,7 @@ pub struct FrontMeta {
     pub text_description: Option<String>,
     pub text_payload: Option<String>,
     pub text_type: Option<String>,
+    pub destination: Option<String>,
     pub ack_bytes: u64,
     pub total_bytes: u64,
 }
@@ -81,6 +82,7 @@ impl FrontMeta {
             text_description,
             text_payload,
             text_type,
+            destination: md.destination,
             ack_bytes: md.ack_bytes,
             total_bytes: md.total_bytes,
         }

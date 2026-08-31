@@ -1339,6 +1339,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                 payload_kind: TransferPayloadKind::Files,
                 payload_preview: Default::default(),
                 payload: Some(TransferPayload::Files(files_name)),
+                destination: Some(get_download_dir().to_string_lossy().into_owned()),
                 pin_code: self.state.pin_code.clone(),
                 total_bytes,
                 ack_bytes: Default::default(),
@@ -1361,6 +1362,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                     let metadata = TransferMetadata {
                         id: self.state.id.clone(),
                         source: self.state.remote_device_info.clone(),
+                        destination: None,
                         payload_kind: TransferPayloadKind::Url,
                         payload_preview: Some(meta.text_title.clone().unwrap_or_default()),
                         pin_code: self.state.pin_code.clone(),
@@ -1385,6 +1387,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                     let metadata = TransferMetadata {
                         id: self.state.id.clone(),
                         source: self.state.remote_device_info.clone(),
+                        destination: None,
                         payload_kind: TransferPayloadKind::Text,
                         payload_preview: Some(meta.text_title.clone().unwrap_or_default()),
                         pin_code: self.state.pin_code.clone(),
@@ -1418,6 +1421,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             let metadata = TransferMetadata {
                 id: self.state.id.clone(),
                 source: self.state.remote_device_info.clone(),
+                destination: None,
                 payload_kind: TransferPayloadKind::WiFi,
                 payload_preview: Some(meta.ssid.clone().unwrap_or_default()),
                 pin_code: self.state.pin_code.clone(),

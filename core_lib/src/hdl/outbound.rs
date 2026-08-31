@@ -183,6 +183,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                 encryption_done: true,
                 transfer_metadata: Some(TransferMetadata {
                     source: Some(rdi),
+                    destination: None,
                     payload_kind: TransferPayloadKind::Files,
                     payload: Some(TransferPayload::Files(files.to_vec())),
                     id: Default::default(),

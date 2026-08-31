@@ -98,16 +98,16 @@
 
 							<div class="flex flex-row justify-end gap-4 mt-1">
 								<p
-									v-if="item.destination || (item.text_type === 'Url' && item.text_payload)"
-									@click.stop="openUrl(item.destination ?? item.text_payload!)"
+									v-if="item.text_type === 'Url' && item.text_payload"
+									@click.stop="openUrl(item.text_payload!)"
 									class="btn px-3 rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
 									Open
 								</p>
 								<p
 									v-if="item.files && item.destination"
-									@click.stop="openUrl(dirOf(item.destination))"
+									@click.stop="openUrl(item.destination!)"
 									class="btn px-3 rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
-									Folder
+									Open folder
 								</p>
 								<p
 									v-if="item.text_type && item.text_payload" @click.stop="writeToClipboard(item.text_payload)"
@@ -197,7 +197,6 @@ import { getStore } from "@tauri-apps/plugin-store";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { disable, enable } from '@tauri-apps/plugin-autostart';
 import { open as tauriDialog } from '@tauri-apps/plugin-dialog';
-import { open } from '@tauri-apps/plugin-shell';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 
 import { ChannelMessage } from '@martichou/core_lib/bindings/ChannelMessage';
@@ -520,9 +519,11 @@ export default {
 		},
 		openUrl: async function(url: string) {
 			try {
-				await open(url);
+				// Direct xdg-open via a Rust command — the shell plugin's open()
+				// silently rejects without a configured scope.
+				await invoke('open_path', { path: url });
 			} catch (e) {
-				this.toastStore.addToast("Error opening URL, it may not be a valid URI", ToastType.Error);
+				this.toastStore.addToast(typeof e === 'string' ? e : "Couldn't open that", ToastType.Error);
 				console.error("Error opening URL", e);
 			}
 		},

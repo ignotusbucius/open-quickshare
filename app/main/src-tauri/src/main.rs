@@ -71,6 +71,7 @@ async fn main() -> Result<(), anyhow::Error> {
             cmds::start_discovery,
             cmds::stop_discovery,
             cmds::get_hostname,
+            cmds::open_path,
             cmds::get_device_name,
             cmds::set_device_name,
             cmds::resolve_paste,

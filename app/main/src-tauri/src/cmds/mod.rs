@@ -8,6 +8,8 @@ mod discovery;
 pub use discovery::*;
 mod get_hostname;
 pub use get_hostname::*;
+mod open_path;
+pub use open_path::*;
 mod resolve_paste;
 pub use resolve_paste::*;
 mod send_payload;

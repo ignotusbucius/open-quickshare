@@ -17,26 +17,26 @@ dbus = { version = "0.9", features = ["vendored"] }
 
 [dependencies]
 anyhow = "1.0"
-base64 = "0.22"
-btleplug = { version = "0.11", optional = true }
+base64 = "0.23"
+btleplug = { version = "0.12", optional = true }
 bytes = "1.10"
 directories = "6.0"
 futures = "0.3"
 get_if_addrs = "0.5"
 hex = "0.4"
-hkdf = "0.12"
-hmac = "0.12"
+hkdf = "0.13"
+hmac = "0.13"
 libaes = "0.7"
 log = "0.4"
 mdns-sd = { git = "https://github.com/Martichou/mdns-sd", branch = "unsolicited" }
 mime_guess = "2.0"
-num-bigint = "0.4"
+num-bigint = "0.5"
 once_cell = "1.20"
-p256 = { version = "0.13", features = ["ecdh"] }
-prost = "0.13"
-rand = "0.9"
+p256 = { version = "0.14", features = ["ecdh"] }
+prost = "0.14"
+rand = "0.10"
 serde = { version = "1.0", features = ["derive"] }
-sha2 = "0.10"
+sha2 = "0.11"
 sys_metrics = { git = "https://github.com/Martichou/sys_metrics" }
 tokio = { version = "1.43", features = [
     "macros",
@@ -54,7 +54,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = "1.15"
 
 [build-dependencies]
-prost-build = "0.13"
+prost-build = "0.14"
 
 [features]
 default = ["experimental"]

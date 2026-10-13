@@ -121,7 +121,12 @@ impl TcpServer {
                                                         }),
                                                     });
                                                 }
-                                                error!("{INNER_NAME}: error while handling client: {e} ({:?})", ir.state.state);
+                                                if ir.state.state == TransferState::Finished {
+                                                    // The peer closing after a completed transfer is normal.
+                                                    debug!("{INNER_NAME}: connection closed after transfer: {e}");
+                                                } else {
+                                                    error!("{INNER_NAME}: error while handling client: {e} ({:?})", ir.state.state);
+                                                }
                                                 break;
                                             }
                                         },
@@ -341,7 +346,12 @@ impl TcpServer {
                                         }),
                                     });
                                 }
-                                error!("{INNER_NAME}: error while handling client: {e} ({:?})", or.state.state);
+                                if or.state.state == TransferState::Finished {
+                                    // The peer closing after a completed transfer is normal.
+                                    debug!("{INNER_NAME}: connection closed after transfer: {e}");
+                                } else {
+                                    error!("{INNER_NAME}: error while handling client: {e} ({:?})", or.state.state);
+                                }
                                 break;
                             }
                         }

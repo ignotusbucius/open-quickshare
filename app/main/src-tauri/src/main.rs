@@ -45,8 +45,27 @@ pub struct AppState {
     pub rqs: Mutex<RQS>,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+fn main() -> Result<(), anyhow::Error> {
+    // Must run before any other thread exists: set_var is not thread-safe.
+    #[cfg(target_os = "linux")]
+    webkit_workarounds();
+
+    tokio::runtime::Runtime::new()?.block_on(run())
+}
+
+/// The bundled WebKitGTK renders through the *host's* GPU driver, and its
+/// DMA-BUF renderer crashes WebKitWebProcess on some GPU/Mesa combinations
+/// (e.g. recent AMD Framework laptops on Fedora-based distros), leaving the
+/// window blank. Falling back to the shared-memory path costs nothing
+/// noticeable for this UI. A value already set by the user wins.
+#[cfg(target_os = "linux")]
+fn webkit_workarounds() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
+async fn run() -> Result<(), anyhow::Error> {
     // Define tauri async runtime to be tokio
     tauri::async_runtime::set(tokio::runtime::Handle::current());
 

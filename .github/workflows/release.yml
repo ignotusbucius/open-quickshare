@@ -64,9 +64,11 @@ jobs:
           wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
           rm "$img"
-          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run squashfs-root "$img"
+          # Name it x86_64 like the .rpm (Tauri uses Debian-style amd64).
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run squashfs-root "${img/_amd64/_x86_64}"
           rm -rf squashfs-root appimagetool-x86_64.AppImage
           ls -la
+          cd ../deb && for f in *_amd64.deb; do mv -v "$f" "${f/_amd64/_x86_64}"; done
 
       - name: Attach bundles to the release
         if: startsWith(github.ref, 'refs/tags/')

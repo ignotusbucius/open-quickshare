@@ -104,6 +104,12 @@
 									Open
 								</p>
 								<p
+									v-if="item.saved_paths?.length === 1"
+									@click.stop="openUrl(item.saved_paths![0])"
+									class="btn px-3 rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">
+									Open
+								</p>
+								<p
 									v-if="item.files && item.destination"
 									@click.stop="openUrl(item.destination!)"
 									class="btn px-3 rounded-xl active:scale-95 transition duration-150 ease-in-out shadow-none">

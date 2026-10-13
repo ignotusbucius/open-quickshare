@@ -2,4 +2,4 @@
 import type { RemoteDeviceInfo } from "./RemoteDeviceInfo";
 import type { TextPayloadType } from "./TextPayloadType";
 
-export type TransferMetadata = { id: string, source: RemoteDeviceInfo | null, pin_code: string | null, destination: string | null, files: Array<string> | null, text_type: TextPayloadType | null, text_description: string | null, text_payload: string | null, total_bytes: bigint, ack_bytes: bigint, };
+export type TransferMetadata = { id: string, source: RemoteDeviceInfo | null, pin_code: string | null, destination: string | null, saved_paths: Array<string> | null, files: Array<string> | null, text_type: TextPayloadType | null, text_description: string | null, text_payload: string | null, total_bytes: bigint, ack_bytes: bigint, };

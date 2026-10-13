@@ -60,6 +60,7 @@ function _displayedItems(vm: TauriVM): Array<DisplayedItem> {
 			state: el.state ?? undefined,
 			pin_code: el.meta?.pin_code ?? undefined,
 			destination: el.meta?.destination ?? undefined,
+			saved_paths: el.meta?.saved_paths ?? undefined,
 			files: el.meta?.files ?? undefined,
 			text_description: el.meta?.text_description ?? undefined,
 			text_payload: el.meta?.text_payload ?? undefined,

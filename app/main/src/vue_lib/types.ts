@@ -21,6 +21,7 @@ export interface DisplayedItem {
 	text_payload?: string,
 	text_type?: string,
 	destination?: string,
+	saved_paths?: string[],
 	total_bytes?: number,
 	ack_bytes?: number,
 }

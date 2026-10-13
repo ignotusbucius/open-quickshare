@@ -47,6 +47,7 @@ pub struct FrontMeta {
     pub text_payload: Option<String>,
     pub text_type: Option<String>,
     pub destination: Option<String>,
+    pub saved_paths: Option<Vec<String>>,
     pub ack_bytes: u64,
     pub total_bytes: u64,
 }
@@ -83,6 +84,7 @@ impl FrontMeta {
             text_payload,
             text_type,
             destination: md.destination,
+            saved_paths: md.saved_paths,
             ack_bytes: md.ack_bytes,
             total_bytes: md.total_bytes,
         }

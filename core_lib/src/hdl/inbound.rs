@@ -1321,6 +1321,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
         if !introduction.file_metadata.is_empty() && introduction.text_metadata.is_empty() {
             trace!("process_introduction: handling file_metadata");
             let mut files_name = Vec::with_capacity(introduction.file_metadata.len());
+            let mut saved_paths = Vec::with_capacity(introduction.file_metadata.len());
             let mut total_bytes: u64 = 0;
 
             for file in &introduction.file_metadata {
@@ -1371,6 +1372,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                     info!("New destination: {:?}", dest);
                 }
 
+                saved_paths.push(dest.to_string_lossy().into_owned());
                 let info = InternalFileInfo {
                     payload_id: file.payload_id(),
                     file_url: dest,
@@ -1390,6 +1392,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                 payload_preview: Default::default(),
                 payload: Some(TransferPayload::Files(files_name)),
                 destination: Some(get_download_dir().to_string_lossy().into_owned()),
+                saved_paths: Some(saved_paths),
                 pin_code: self.state.pin_code.clone(),
                 total_bytes,
                 ack_bytes: Default::default(),
@@ -1413,6 +1416,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                         id: self.state.id.clone(),
                         source: self.state.remote_device_info.clone(),
                         destination: None,
+                        saved_paths: None,
                         payload_kind: TransferPayloadKind::Url,
                         payload_preview: Some(meta.text_title.clone().unwrap_or_default()),
                         pin_code: self.state.pin_code.clone(),
@@ -1438,6 +1442,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                         id: self.state.id.clone(),
                         source: self.state.remote_device_info.clone(),
                         destination: None,
+                        saved_paths: None,
                         payload_kind: TransferPayloadKind::Text,
                         payload_preview: Some(meta.text_title.clone().unwrap_or_default()),
                         pin_code: self.state.pin_code.clone(),
@@ -1472,6 +1477,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                 id: self.state.id.clone(),
                 source: self.state.remote_device_info.clone(),
                 destination: None,
+                saved_paths: None,
                 payload_kind: TransferPayloadKind::WiFi,
                 payload_preview: Some(meta.ssid.clone().unwrap_or_default()),
                 pin_code: self.state.pin_code.clone(),

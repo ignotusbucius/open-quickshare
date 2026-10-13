@@ -66,6 +66,9 @@ pub struct TransferMetadata {
     /// Directory the received files were written into (inbound file
     /// transfers only) — lets the UI offer an "Open folder" action.
     pub destination: Option<String>,
+    /// Full path each received file is written to, in `payload` order —
+    /// differs from destination/name when a clash renamed it to "name (1)".
+    pub saved_paths: Option<Vec<String>>,
 
     pub total_bytes: u64,
     pub ack_bytes: u64,

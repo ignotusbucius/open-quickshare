@@ -50,6 +50,24 @@ jobs:
           pnpm install
           pnpm build
 
+      - name: Unbundle libwayland from the AppImage
+        # linuxdeploy ships the runner's libwayland-*, but the host's Mesa
+        # libEGL is loaded at runtime and needs the host's (newer) libwayland.
+        # The mismatch kills WebKitWebProcess on current Fedora/Aurora with
+        # "Could not create default EGL display: EGL_BAD_PARAMETER" (white
+        # window). Every GTK3 desktop already has libwayland, so use the host's.
+        run: |
+          cd app/main/src-tauri/target/release/bundle/appimage
+          img=$(ls *.AppImage)
+          ./"$img" --appimage-extract >/dev/null
+          rm -v squashfs-root/usr/lib/libwayland-*
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          rm "$img"
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run squashfs-root "$img"
+          rm -rf squashfs-root appimagetool-x86_64.AppImage
+          ls -la
+
       - name: Attach bundles to the release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2

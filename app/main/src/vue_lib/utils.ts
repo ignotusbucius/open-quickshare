@@ -56,6 +56,7 @@ function _displayedItems(vm: TauriVM): Array<DisplayedItem> {
 				?? 'Unknown',
 			deviceType: el.meta?.source?.device_type ?? 'Unknown',
 			endpoint: false,
+			outbound: el.rtype === 'Outbound',
 
 			state: el.state ?? undefined,
 			pin_code: el.meta?.pin_code ?? undefined,

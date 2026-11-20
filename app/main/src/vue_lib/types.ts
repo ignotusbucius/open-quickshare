@@ -13,6 +13,8 @@ export interface DisplayedItem {
 	deviceType: DeviceType,
 	endpoint: boolean,
 	connecting?: boolean,
+	/** A transfer we are sending (vs. receiving). */
+	outbound?: boolean,
 
 	state?: State,
 	pin_code?: string,

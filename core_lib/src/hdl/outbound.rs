@@ -1037,7 +1037,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         let mut data = vec![0u8; msg_len];
         stream_read_exact(&mut self.socket, &mut data).await?;
 
-        let smsg = SecureMessage::decode(&*data)?;
+        let smsg = match SecureMessage::decode(&*data) {
+            Ok(m) => m,
+            Err(e) => {
+                // Not an encrypted frame. Say what it was: a plaintext
+                // OfflineFrame here means the peer no longer treats this
+                // channel as encrypted (e.g. it is tearing the session down).
+                match OfflineFrame::decode(&*data) {
+                    Ok(f) => warn!(
+                        "peer sent a PLAINTEXT frame on the encrypted channel ({} bytes): {:?}",
+                        data.len(),
+                        f
+                    ),
+                    Err(_) => warn!(
+                        "peer sent an undecodable frame ({} bytes): {}",
+                        data.len(),
+                        hex::encode(&data[..data.len().min(64)])
+                    ),
+                }
+                return Err(e.into());
+            }
+        };
         let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
         hmac.update(&smsg.header_and_body);
         if hmac.verify_slice(&smsg.signature).is_err() {
@@ -1986,8 +2006,27 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         let deadline = tokio::time::Instant::now() + grace;
         loop {
             match tokio::time::timeout_at(deadline, self.read_encrypted_offline_frame()).await {
-                Err(_) => return false,    // grace elapsed, peer still connected
-                Ok(Err(_)) => return true, // EOF / read error — peer is gone
+                Err(_) => return false, // grace elapsed, peer still connected
+                Ok(Err(e)) => {
+                    // A clean close (EOF/reset) is how a receiver that finished
+                    // hangs up. Anything else (garbage, a bad MAC, a plaintext
+                    // teardown) is not a confirmation.
+                    let closed = e.chain().any(|c| {
+                        c.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                            matches!(
+                                io.kind(),
+                                std::io::ErrorKind::UnexpectedEof
+                                    | std::io::ErrorKind::ConnectionReset
+                                    | std::io::ErrorKind::ConnectionAborted
+                                    | std::io::ErrorKind::BrokenPipe
+                            )
+                        })
+                    });
+                    if !closed {
+                        warn!("close-wait: peer sent something other than a hang-up: {e}");
+                    }
+                    return closed;
+                }
                 Ok(Ok(frame)) => {
                     if let Some(v1) = frame.v1.as_ref() {
                         match v1.r#type() {

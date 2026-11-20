@@ -12,7 +12,7 @@ defineProps({
 </script>
 
 <template>
-	<div>
+	<div class="shrink-0">
 		<div class="relative w-[62px] h-[62px]">
 			<!-- Indeterminate spinner while connecting / handshaking, before any
 			     byte-progress exists to draw the real ring. -->

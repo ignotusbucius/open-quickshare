@@ -183,6 +183,14 @@ pub struct OutboundRequest<S = TcpStream> {
     /// for the length of the transfer; leaves it (and restores Wi-Fi) on drop.
     #[cfg(all(feature = "experimental", target_os = "linux"))]
     join_guard: Option<crate::hdl::JoinGuard>,
+    /// The upgrade offer we're answering asked for an unencrypted new channel
+    /// (UpgradePathInfo.supports_disabling_encryption).
+    bwu_offer_disables_encryption: bool,
+    /// After such an upgrade the new channel carries plain OfflineFrames: the
+    /// phone turns UKEY2 framing off on its WPA2 hotspot whatever we answer
+    /// ("ignoring wire CLIENT_INTRODUCTION.supportsDisablingEncryption=false
+    /// ... using true"), so we must match or it discards every frame.
+    plaintext_channel: bool,
 }
 
 #[allow(private_bounds)]
@@ -232,6 +240,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             hotspot_guard: None,
             #[cfg(all(feature = "experimental", target_os = "linux"))]
             join_guard: None,
+            bwu_offer_disables_encryption: false,
+            plaintext_channel: false,
         }
     }
 
@@ -1036,6 +1046,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         }
         let mut data = vec![0u8; msg_len];
         stream_read_exact(&mut self.socket, &mut data).await?;
+        if self.plaintext_channel {
+            return Ok(OfflineFrame::decode(&*data)?);
+        }
 
         let smsg = match SecureMessage::decode(&*data) {
             Ok(m) => m,
@@ -1141,6 +1154,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             match bwu.event_type() {
                 EventType::UpgradePathAvailable => {
                     let upi = bwu.upgrade_path_info.as_ref();
+                    self.bwu_offer_disables_encryption =
+                        upi.and_then(|u| u.supports_disabling_encryption) == Some(true);
                     let medium = upi.map(|u| u.medium());
                     match medium {
                         Some(UpMedium::WifiLan) => {
@@ -1428,7 +1443,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
             None,
             Some(location_nearby_connections::bandwidth_upgrade_negotiation_frame::ClientIntroduction {
                 endpoint_id: Some(String::from_utf8_lossy(&self.endpoint_id).to_string()),
-                supports_disabling_encryption: Some(false),
+                supports_disabling_encryption: Some(self.bwu_offer_disables_encryption),
             }),
         );
         send_plain_frame(&mut tcp, &intro.encode_to_vec()).await?;
@@ -1440,6 +1455,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         self.drain_prior_channel().await?;
 
         if self.socket.upgrade_to_tcp(tcp) {
+            if self.bwu_offer_disables_encryption {
+                self.plaintext_channel = true;
+                info!("BWU(send): new channel is unencrypted (phone's choice; the link is WPA2)");
+            }
             info!("BWU(send): upgraded to Wi-Fi; payload continues over TCP");
             Ok(true)
         } else {
@@ -2195,6 +2214,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
     }
 
     async fn encrypt_and_send(&mut self, frame: &OfflineFrame) -> Result<(), anyhow::Error> {
+        if self.plaintext_channel {
+            return self.send_frame(frame.encode_to_vec()).await;
+        }
         let d2d_msg = DeviceToDeviceMessage {
             sequence_number: Some(self.get_server_seq_inc().await),
             message: Some(frame.encode_to_vec()),

@@ -49,3 +49,20 @@ jobs:
       - run: |
           cd core_lib
           cargo clippy --all-features
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - run: |
+          cd app/main
+          pnpm install --frozen-lockfile
+          pnpm ts-check
+          pnpm lint
+          pnpm exec vitest run

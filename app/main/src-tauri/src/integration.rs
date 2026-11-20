@@ -178,7 +178,7 @@ pub fn sync_file_manager_menu(enabled: bool) -> Result<(), String> {
         let entry = format!(
             "[Desktop Entry]\n\
              # {MARKER}; it keeps this file pointed at the app. Turn it off in\n\
-             # Settings → \"Send via Quick Share in file manager menus\".\n\
+             # Settings → \"Send via Quick Share\" in file managers.\n\
              Type=Service\n\
              MimeType=all/allfiles;\n\
              X-KDE-ServiceTypes=KonqPopupMenu/Plugin\n\
@@ -198,9 +198,13 @@ pub fn sync_file_manager_menu(enabled: bool) -> Result<(), String> {
     }
     if on_path("nautilus") || nautilus.exists() {
         // Nautilus runs scripts in the current folder with the selection as
-        // arguments; --send resolves relative names against that folder.
+        // (relative) arguments. Make them absolute here: an AppImage changes
+        // into its own mount before our code runs, so relative names would
+        // resolve against the wrong directory.
         let script = format!(
-            "#!/bin/sh\n# {MARKER}; turn it off in Settings.\nexec {} --send \"$@\"\n",
+            "#!/bin/sh\n# {MARKER}; turn it off in Settings.\n\
+             for f in \"$@\"; do set -- \"$@\" \"$(realpath -- \"$f\")\"; shift; done\n\
+             exec {} --send \"$@\"\n",
             sh_quote(&exe),
         );
         if let Err(e) = write_ours(&nautilus, &script) {

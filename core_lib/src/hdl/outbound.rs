@@ -59,6 +59,26 @@ pub(crate) trait WifiUpgradable {
     fn is_low_bandwidth(&self) -> bool;
     /// Replace the underlying transport with `tcp`; returns false if unsupported.
     fn upgrade_to_tcp(&mut self, tcp: TcpStream) -> bool;
+    /// Bytes written but not yet acknowledged by the peer's TCP stack, when
+    /// the transport can tell (TCP on Linux); None otherwise.
+    fn unsent_bytes(&self) -> Option<usize> {
+        None
+    }
+}
+
+/// Bytes in a TCP socket's send queue not yet ACKed by the peer (TIOCOUTQ).
+#[cfg(target_os = "linux")]
+pub(crate) fn tcp_unsent_bytes(tcp: &TcpStream) -> Option<usize> {
+    use std::os::fd::AsRawFd;
+    let mut n: libc::c_int = 0;
+    // SAFETY: TIOCOUTQ writes one c_int into `n`; the fd is valid for the
+    // lifetime of `tcp`.
+    let rc = unsafe { libc::ioctl(tcp.as_raw_fd(), libc::TIOCOUTQ, &mut n) };
+    (rc == 0 && n >= 0).then_some(n as usize)
+}
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn tcp_unsent_bytes(_tcp: &TcpStream) -> Option<usize> {
+    None
 }
 
 impl WifiUpgradable for TcpStream {
@@ -67,6 +87,9 @@ impl WifiUpgradable for TcpStream {
     }
     fn upgrade_to_tcp(&mut self, _tcp: TcpStream) -> bool {
         false
+    }
+    fn unsent_bytes(&self) -> Option<usize> {
+        tcp_unsent_bytes(self)
     }
 }
 
@@ -1295,6 +1318,82 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         self.finish_upgrade_over(tcp).await
     }
 
+    /// Close out the prior (BLE) channel before swapping sockets: send our
+    /// LAST_WRITE, then keep reading until we have seen BOTH the phone's
+    /// SAFE_TO_CLOSE (its answer to our LAST_WRITE) and its own LAST_WRITE —
+    /// which we answer with SAFE_TO_CLOSE. The phone may send SAFE_TO_CLOSE
+    /// first; stopping there (as this used to) closed BLE before the phone's
+    /// LAST_WRITE was answered, so the phone never finished its side of the
+    /// switch and failed the transfer while we reported success. Mirrors
+    /// InboundRequest::drain_prior_channel.
+    async fn drain_prior_channel(&mut self) -> Result<(), anyhow::Error> {
+        use location_nearby_connections::bandwidth_upgrade_negotiation_frame::EventType;
+        use location_nearby_connections::v1_frame::FrameType;
+
+        self.encrypt_and_send(&Self::bwu_frame(
+            EventType::LastWriteToPriorChannel,
+            None,
+            None,
+        ))
+        .await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+        let (mut peer_last_write, mut peer_safe_to_close) = (false, false);
+        while !(peer_last_write && peer_safe_to_close) {
+            let offline = match tokio::time::timeout_at(
+                deadline,
+                self.read_encrypted_offline_frame(),
+            )
+            .await
+            {
+                Ok(Ok(f)) => f,
+                Ok(Err(e)) => {
+                    debug!("BWU(send) drain: prior channel ended ({e})");
+                    break;
+                }
+                Err(_) => {
+                    warn!(
+                        "BWU(send) drain: deadline reached (last_write={peer_last_write}, \
+                             safe_to_close={peer_safe_to_close}); proceeding with the swap"
+                    );
+                    break;
+                }
+            };
+            let Some(v1) = offline.v1.as_ref() else {
+                continue;
+            };
+            match v1.r#type() {
+                FrameType::BandwidthUpgradeNegotiation => {
+                    match v1
+                        .bandwidth_upgrade_negotiation
+                        .as_ref()
+                        .map(|b| b.event_type())
+                    {
+                        Some(EventType::LastWriteToPriorChannel) => {
+                            debug!("BWU(send) drain: phone LAST_WRITE → sending SAFE_TO_CLOSE");
+                            peer_last_write = true;
+                            let _ = self
+                                .encrypt_and_send(&Self::bwu_frame(
+                                    EventType::SafeToClosePriorChannel,
+                                    None,
+                                    None,
+                                ))
+                                .await;
+                        }
+                        Some(EventType::SafeToClosePriorChannel) => {
+                            debug!("BWU(send) drain: phone SAFE_TO_CLOSE");
+                            peer_safe_to_close = true;
+                        }
+                        other => debug!("BWU(send) drain: event {other:?}"),
+                    }
+                }
+                // Never write to a channel we already LAST_WRITE'd.
+                FrameType::KeepAlive => {}
+                other => debug!("BWU(send) drain: ignoring {other:?} frame"),
+            }
+        }
+        Ok(())
+    }
+
     /// Common tail of a client-role upgrade: introduce ourselves on the new TCP
     /// channel, drain the BLE channel, and swap the socket.
     async fn finish_upgrade_over(
@@ -1318,41 +1417,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
 
         // Drain the BLE channel: our LAST_WRITE, then respond to the phone's
         // control frames until it is safe to close the prior channel.
-        self.encrypt_and_send(&Self::bwu_frame(
-            EventType::LastWriteToPriorChannel,
-            None,
-            None,
-        ))
-        .await?;
-        for _ in 0..16 {
-            let offline = match tokio::time::timeout(
-                Duration::from_secs(5),
-                self.read_encrypted_offline_frame(),
-            )
-            .await
-            {
-                Ok(Ok(f)) => f,
-                _ => break,
-            };
-            let event = offline
-                .v1
-                .as_ref()
-                .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref())
-                .map(|b| b.event_type());
-            match event {
-                Some(EventType::LastWriteToPriorChannel) => {
-                    let _ = self
-                        .encrypt_and_send(&Self::bwu_frame(
-                            EventType::SafeToClosePriorChannel,
-                            None,
-                            None,
-                        ))
-                        .await;
-                }
-                Some(EventType::SafeToClosePriorChannel) => break,
-                other => debug!("BWU(send) drain: event {other:?}"),
-            }
-        }
+        self.drain_prior_channel().await?;
 
         if self.socket.upgrade_to_tcp(tcp) {
             info!("BWU(send): upgraded to Wi-Fi; payload continues over TCP");
@@ -1480,41 +1545,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         send_plain_frame(&mut tcp, &Self::bwu_ack_frame().encode_to_vec()).await?;
 
         // Drain the BLE channel, then swap the socket to the hosted TCP link.
-        self.encrypt_and_send(&Self::bwu_frame(
-            EventType::LastWriteToPriorChannel,
-            None,
-            None,
-        ))
-        .await?;
-        for _ in 0..16 {
-            let offline = match tokio::time::timeout(
-                Duration::from_secs(5),
-                self.read_encrypted_offline_frame(),
-            )
-            .await
-            {
-                Ok(Ok(f)) => f,
-                _ => break,
-            };
-            let event = offline
-                .v1
-                .as_ref()
-                .and_then(|v| v.bandwidth_upgrade_negotiation.as_ref())
-                .map(|b| b.event_type());
-            match event {
-                Some(EventType::LastWriteToPriorChannel) => {
-                    let _ = self
-                        .encrypt_and_send(&Self::bwu_frame(
-                            EventType::SafeToClosePriorChannel,
-                            None,
-                            None,
-                        ))
-                        .await;
-                }
-                Some(EventType::SafeToClosePriorChannel) => break,
-                other => debug!("BWU(send) host drain: event {other:?}"),
-            }
-        }
+        self.drain_prior_channel().await?;
 
         if self.socket.upgrade_to_tcp(tcp) {
             self.hotspot_guard = Some(guard);
@@ -1621,8 +1652,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                             // costs nothing there. Only if the peer holds the socket open
                             // past the grace period do we announce our own disconnection
                             // (the previous behavior) so nobody waits on us forever.
+                            // "Written" isn't "received": over Wi-Fi megabytes can
+                            // still sit in our socket's send queue. Start the grace
+                            // only once the phone's TCP stack has everything.
+                            self.wait_until_sent().await;
                             let peer_closed =
-                                self.wait_for_peer_close(Duration::from_secs(8)).await;
+                                self.wait_for_peer_close(Duration::from_secs(15)).await;
                             if !peer_closed {
                                 // Windows never sends a DISCONNECTION frame as a
                                 // sender and treats receiving one as a broken
@@ -1640,9 +1675,22 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
                                     self.wait_for_peer_close(Duration::from_secs(2)).await;
                                 }
                             }
+                            // An Android receiver confirms by hanging up within a
+                            // second or two of the last byte. If it never did, it
+                            // did not complete the share — don't claim success.
+                            let confirmed = peer_closed || peer_is_windows;
+                            if !confirmed {
+                                warn!(
+                                    "receiver never confirmed the transfer; reporting it as failed"
+                                );
+                            }
                             self.update_state(
                                 |e| {
-                                    e.state = TransferState::Finished;
+                                    e.state = if confirmed {
+                                        TransferState::Finished
+                                    } else {
+                                        TransferState::Disconnected
+                                    };
                                 },
                                 true,
                             )
@@ -1911,6 +1959,29 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
     /// every 5s (Windows) tears the session down if the pings go unanswered
     /// while it finalizes. Returns `true` if the peer closed (EOF or an
     /// explicit DISCONNECTION frame).
+    /// Wait (bounded) until the transport's send queue is empty, i.e. the peer's
+    /// TCP stack has acknowledged every byte. Gives up if the queue stops
+    /// shrinking for 10 s. No-op where the transport can't tell (BLE).
+    async fn wait_until_sent(&mut self) {
+        let Some(mut last) = self.socket.unsent_bytes() else {
+            return;
+        };
+        let mut last_progress = tokio::time::Instant::now();
+        while last > 0 {
+            if last_progress.elapsed() > Duration::from_secs(10) {
+                warn!("send queue stuck at {last} unsent bytes; continuing");
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let now = self.socket.unsent_bytes().unwrap_or(0);
+            if now < last {
+                last_progress = tokio::time::Instant::now();
+            }
+            last = now;
+        }
+        debug!("send queue drained");
+    }
+
     async fn wait_for_peer_close(&mut self, grace: Duration) -> bool {
         let deadline = tokio::time::Instant::now() + grace;
         loop {

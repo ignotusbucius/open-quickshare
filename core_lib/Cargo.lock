@@ -1459,6 +1459,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "libaes",
+ "libc",
  "log",
  "mdns-sd",
  "mime_guess",

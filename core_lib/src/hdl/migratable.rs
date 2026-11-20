@@ -27,6 +27,12 @@ impl crate::hdl::WifiUpgradable for MigratableStream {
         *self = MigratableStream::Tcp(tcp);
         true
     }
+    fn unsent_bytes(&self) -> Option<usize> {
+        match self {
+            MigratableStream::Tcp(s) => crate::hdl::outbound::tcp_unsent_bytes(s),
+            _ => None,
+        }
+    }
 }
 
 impl AsyncRead for MigratableStream {

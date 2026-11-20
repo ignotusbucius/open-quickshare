@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use tauri_plugin_clipboard_manager::ClipboardExt;
 
 /// What a paste resolved to: the file paths that were on the clipboard, or a
 /// single generated .txt holding the clipboard text (Windows Quick Share style).
@@ -20,10 +19,7 @@ const MAX_TEXT_BYTES: usize = 10 * 1024 * 1024;
 /// a log excerpt containing one real path is still shared as text.
 #[tauri::command]
 pub async fn resolve_paste(app: tauri::AppHandle) -> Result<ResolvedPaste, String> {
-    let text = app
-        .clipboard()
-        .read_text()
-        .map_err(|_| String::from("Clipboard is empty or has no text"))?;
+    let text = super::clipboard::read_text(&app).await?;
 
     if text.trim().is_empty() {
         return Err(String::from("Clipboard is empty"));

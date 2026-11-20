@@ -87,6 +87,7 @@ async fn run() -> Result<(), anyhow::Error> {
         .invoke_handler(tauri::generate_handler![
             cmds::change_download_path,
             cmds::change_visibility,
+            cmds::copy_text,
             cmds::start_discovery,
             cmds::stop_discovery,
             cmds::get_hostname,

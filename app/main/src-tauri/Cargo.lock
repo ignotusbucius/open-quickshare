@@ -4258,6 +4258,7 @@ version = "0.15.2"
 dependencies = [
  "anyhow",
  "fern",
+ "gtk",
  "humantime",
  "log",
  "notify-rust",

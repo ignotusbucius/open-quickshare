@@ -1,5 +1,7 @@
 mod change_download_path;
 pub use change_download_path::*;
+mod clipboard;
+pub use clipboard::*;
 mod change_visibility;
 pub use change_visibility::*;
 mod device_name;

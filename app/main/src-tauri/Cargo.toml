@@ -35,6 +35,10 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net", "sync", "time", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Same major as tauri's own; the clipboard goes through it for Wayland support.
+gtk = "0.18"
+
 [features]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL

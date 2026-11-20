@@ -104,6 +104,7 @@ async fn run() -> Result<(), anyhow::Error> {
             cmds::send_payload,
             cmds::send_to_rs,
             integration::take_pending_send,
+            notification::notify,
             integration::set_file_manager_menu,
         ])
         .setup(|app| {

@@ -13,23 +13,57 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(target_os = "linux")]
 use crate::cmds;
 
+/// The app's name as notification servers should show it. Without this,
+/// notify-rust sends the executable's name ("rquickshare").
+pub const APP_NAME: &str = "Open QuickShare";
+
+/// A notification carrying our name and icon.
+#[cfg(target_os = "linux")]
+fn notification() -> Notification {
+    let mut n = Notification::new();
+    n.appname(APP_NAME);
+    if let Some(icon) = crate::integration::app_icon() {
+        n.icon(&icon.to_string_lossy());
+    }
+    n
+}
+
+/// Plain notification (title + body), for the frontend.
+#[tauri::command]
+pub fn notify(app: AppHandle, title: String, body: String) {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = &app;
+        if let Err(e) = notification().summary(&title).body(&body).show() {
+            error!("Couldn't show notification: {e}");
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = app
+        .notification()
+        .builder()
+        .title(&title)
+        .body(&body)
+        .show();
+}
+
 pub fn send_request_notification(name: String, id: String, app_handle: &AppHandle) {
     // Is not used in macos, get rid of warning
     let _ = id;
 
-    let body = format!("{name} want to initiate a transfer");
+    let body = format!("{name} wants to share with you");
 
     #[cfg(not(target_os = "linux"))]
     let _ = app_handle
         .notification()
         .builder()
-        .title("Open QuickShare")
+        .title(APP_NAME)
         .body(&body)
         .show();
 
     #[cfg(target_os = "linux")]
-    match Notification::new()
-        .summary("Open QuickShare")
+    match notification()
+        .summary(APP_NAME)
         .body(&body)
         .action("accept", "Accept")
         .action("reject", "Reject")
@@ -74,19 +108,19 @@ pub fn send_request_notification(name: String, id: String, app_handle: &AppHandl
 }
 
 pub fn send_temporarily_notification(app_handle: &AppHandle) {
-    let body = "RQuickShare is temporarily hidden".to_string();
+    let body = "Someone nearby is sharing — you're hidden".to_string();
 
     #[cfg(not(target_os = "linux"))]
     let _ = app_handle
         .notification()
         .builder()
-        .title("Open QuickShare")
+        .title(APP_NAME)
         .body(&body)
         .show();
 
     #[cfg(target_os = "linux")]
-    match Notification::new()
-        .summary("Open QuickShare")
+    match notification()
+        .summary(APP_NAME)
         .body(&body)
         .action("visible", "Be visible (1m)")
         .action("ignore", "Ignore")

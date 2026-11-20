@@ -204,7 +204,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { getStore } from "@tauri-apps/plugin-store";
-import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
 import { disable, enable } from '@tauri-apps/plugin-autostart';
 import { open as tauriDialog } from '@tauri-apps/plugin-dialog';
 
@@ -386,8 +386,10 @@ export default {
 							const what = cm.meta?.files?.length
 								? `Received ${cm.meta.files.length} file(s)`
 								: 'Received text';
-							sendNotification({
-								title: 'Open Quick Share',
+							// Via Rust so it carries our app name and icon (the
+							// plugin's would show up as "rquickshare").
+							await invoke('notify', {
+								title: 'Open QuickShare',
 								body: `${what} from ${cm.meta?.source?.name ?? 'a nearby device'}`,
 							});
 						}

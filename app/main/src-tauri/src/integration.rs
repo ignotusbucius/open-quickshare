@@ -91,6 +91,21 @@ fn launcher() -> Option<PathBuf> {
     std::env::current_exe().ok()
 }
 
+/// Our icon as a file, for notifications and menu entries (written once).
+pub fn app_icon() -> Option<PathBuf> {
+    static ICON: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ICON.get_or_init(|| {
+        let bytes: &[u8] = include_bytes!("../icons/128x128.png");
+        let path = data_home()?.join("open-quickshare/icon.png");
+        if std::fs::read(&path).ok().as_deref() != Some(bytes) {
+            std::fs::create_dir_all(path.parent()?).ok()?;
+            std::fs::write(&path, bytes).ok()?;
+        }
+        Some(path)
+    })
+    .clone()
+}
+
 fn data_home() -> Option<PathBuf> {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -156,7 +171,6 @@ pub fn sync_file_manager_menu(enabled: bool) -> Result<(), String> {
     };
     let dolphin = data.join("kio/servicemenus").join(DOLPHIN_FILE);
     let nautilus = data.join("nautilus/scripts").join(NAUTILUS_FILE);
-    let icon = data.join("open-quickshare/send-icon.png");
 
     if !enabled {
         remove_ours(&dolphin);
@@ -169,10 +183,7 @@ pub fn sync_file_manager_menu(enabled: bool) -> Result<(), String> {
     };
 
     let mut errors = Vec::new();
-    if let Some(dir) = icon.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(&icon, include_bytes!("../icons/128x128.png"));
+    let icon = app_icon().unwrap_or_default();
 
     if on_path("dolphin") || dolphin.exists() {
         let entry = format!(

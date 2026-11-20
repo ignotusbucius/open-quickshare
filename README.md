@@ -188,7 +188,7 @@ firewalld note under Requirements).
 **Send from your file manager:** right‑click files in Dolphin (or Nautilus → Scripts) and
 choose **Send via Quick Share**. The app adds this entry for your user on start and keeps
 it pointed at the installed binary or AppImage; turn it off in Settings. From a terminal:
-`open-quickshare --send <file>…` (absolute paths when running the AppImage).
+`rquickshare --send <file>…` for the deb/rpm, or `open-quickshare_*.AppImage --send /absolute/path…`.
 
 <details>
 <summary>Build from source</summary>

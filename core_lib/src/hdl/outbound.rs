@@ -594,7 +594,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
     ) -> Result<(), anyhow::Error> {
         let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
         hmac.update(&smsg.header_and_body);
-        if !hmac.finalize().into_bytes()[..].eq(smsg.signature.as_slice()) {
+        if hmac.verify_slice(&smsg.signature).is_err() {
             return Err(anyhow!("hmac!=signature"));
         }
 
@@ -1018,7 +1018,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin + WifiUpgradable> OutboundRequest<S> {
         let smsg = SecureMessage::decode(&*data)?;
         let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
         hmac.update(&smsg.header_and_body);
-        if !hmac.finalize().into_bytes()[..].eq(smsg.signature.as_slice()) {
+        if hmac.verify_slice(&smsg.signature).is_err() {
             return Err(anyhow!("hmac!=signature"));
         }
         let header_and_body = HeaderAndBody::decode(&*smsg.header_and_body)?;

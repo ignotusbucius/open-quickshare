@@ -268,7 +268,6 @@ export default {
 			outboundPayload: ref<OutboundPayload | undefined>(),
 
 			// eslint-disable-next-line no-undef
-			cleanupInterval: opt<NodeJS.Timeout>(),
 			unlisten: Array<UnlistenFn>(),
 
 			version: opt<string>(),
@@ -476,10 +475,6 @@ export default {
 
 	unmounted: function() {
 		this.unlisten.forEach((el) => el());
-
-		if (this.cleanupInterval && this.cleanupInterval[Symbol.dispose]) {
-			this.cleanupInterval[Symbol.dispose]();
-		}
 	},
 
 	computed: {

@@ -170,6 +170,15 @@ sudo rpm -i open-quickshare-*.x86_64.rpm
 chmod +x open-quickshare_*.AppImage && ./open-quickshare_*.AppImage
 ```
 
+On **Arch Linux** and derivatives, install from the AUR (community‑maintained):
+[`open-quickshare-bin`](https://aur.archlinux.org/packages/open-quickshare-bin) repackages
+the release binary, [`open-quickshare`](https://aur.archlinux.org/packages/open-quickshare)
+builds from source.
+
+```bash
+yay -S open-quickshare-bin    # or: paru -S open-quickshare-bin
+```
+
 Requires the GTK/WebKit runtime (`libwebkit2gtk-4.1`, `libayatana-appindicator3`); the
 packages pull these in, or install them from your distro if the AppImage complains.
 

@@ -61,6 +61,14 @@ jobs:
           img=$(ls *.AppImage)
           ./"$img" --appimage-extract >/dev/null
           rm -v squashfs-root/usr/lib/libwayland-*
+          # linuxdeploy's GTK hook forces GDK_BACKEND=x11 (tauri#8541, the
+          # libwayland mismatch removed above), so the AppImage couldn't start
+          # on a Wayland session without XWayland. Keep X11 where it exists;
+          # otherwise let GTK use Wayland. A user-set GDK_BACKEND wins.
+          hook=squashfs-root/apprun-hooks/linuxdeploy-plugin-gtk.sh
+          grep -q '^export GDK_BACKEND=x11' "$hook"
+          sed -i 's|^export GDK_BACKEND=x11.*|if [ -n "${DISPLAY:-}" ]; then export GDK_BACKEND="${GDK_BACKEND:-x11}"; fi|' "$hook"
+          grep -n GDK_BACKEND "$hook"
           wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
           rm "$img"

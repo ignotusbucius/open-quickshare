@@ -275,6 +275,7 @@ export default {
 			autostart: ref<boolean>(true),
 			realclose: ref<boolean>(false),
 			startminimized: ref<boolean>(false),
+			filemanagerMenu: ref<boolean>(true),
 			visibility: ref<Visibility>('Visible'),
 			downloadPath: ref<string | undefined>(),
 
@@ -304,6 +305,7 @@ export default {
 
 			await this.getRealclose(this);
 			await this.getStartMinimized(this);
+			await this.getFileManagerMenu(this);
 			await this.getDownloadPath(this);
 
 			// Check permission for notification
@@ -438,6 +440,11 @@ export default {
 				})
 			);
 
+			// "Send via Quick Share" from the file manager (`--send <files>`):
+			// collect files queued before the UI was up, and later requests.
+			this.unlisten.push(await listen('rs2js_send_files', () => this.collectPendingSend()));
+			await this.collectPendingSend();
+
 			this.unlisten.push(
 				await getCurrentWindow().onDragDropEvent(async (event) => {
 					if (event.payload.type === 'over') {
@@ -490,6 +497,20 @@ export default {
 	},
 
 	methods: {
+		collectPendingSend: async function() {
+			const files = await invoke('take_pending_send') as string[] | null;
+			if (files === null) return;
+			if (files.length === 0) {
+				this.toastStore.addToast("Only files can be sent — folders were skipped", ToastType.Error);
+				return;
+			}
+			this.outboundPayload = {
+				Files: files
+			} as OutboundPayload;
+			if (!this.discoveryRunning) await invoke('start_discovery');
+			this.discoveryRunning = true;
+			this.toastStore.addToast(`Choose a device to send ${files.length} file(s)`, ToastType.Info);
+		},
 		pasteFromClipboard: async function() {
 			if (this.pasteInFlight) return;
 			this.pasteInFlight = true;

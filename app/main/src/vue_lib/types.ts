@@ -43,6 +43,7 @@ export const numberToVisibility: { [key: number]: Visibility } = {
 export const autostartKey = "autostart";
 export const realcloseKey = "realclose";
 export const startminimizedKey = "startminimized";
+export const filemanagerMenuKey = 'filemanager_menu';
 export const visibilityKey = "visibility";
 export const downloadPathKey = "download_path";
 export const deviceNameKey = "device_name";

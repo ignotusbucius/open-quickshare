@@ -30,6 +30,7 @@ use crate::store::{
 
 mod cmds;
 mod dto;
+mod integration;
 mod logger;
 mod notification;
 mod store;
@@ -78,9 +79,14 @@ async fn run() -> Result<(), anyhow::Error> {
             None,
         ))
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             trace!("tauri_plugin_single_instance: instance already running");
-            open_main_window(app);
+            // `open-quickshare --send <files>` from the file manager while
+            // we're already running: hand the files to this instance.
+            match integration::parse_send_args(argv, std::path::Path::new(&cwd)) {
+                Some(files) => integration::queue_send(app, files),
+                None => open_main_window(app),
+            }
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
@@ -97,6 +103,8 @@ async fn run() -> Result<(), anyhow::Error> {
             cmds::resolve_paste,
             cmds::send_payload,
             cmds::send_to_rs,
+            integration::take_pending_send,
+            integration::set_file_manager_menu,
         ])
         .setup(|app| {
             // Setting up logging inside file for the app
@@ -106,6 +114,22 @@ async fn run() -> Result<(), anyhow::Error> {
 
             // Initialize default values for the store
             init_default(app.app_handle());
+
+            // "Send via Quick Share" in file managers, kept pointed at this
+            // binary/AppImage; and files passed to this launch via --send.
+            app.manage(integration::PendingSend::default());
+            #[cfg(target_os = "linux")]
+            if let Err(e) = integration::sync_file_manager_menu(
+                crate::store::get_file_manager_menu(app.app_handle()),
+            ) {
+                warn!("file-manager menu: {e}");
+            }
+            if let Some(files) = integration::parse_send_args(
+                std::env::args(),
+                &std::env::current_dir().unwrap_or_default(),
+            ) {
+                integration::queue_send(app.app_handle(), files);
+            }
 
             // Initialize system Tray
             let name = MenuItemBuilder::new("Open QuickShare")
@@ -202,7 +226,12 @@ async fn run() -> Result<(), anyhow::Error> {
         .run(|app_handle, event| match event {
             tauri::RunEvent::Ready { .. } => {
                 trace!("RunEvent::Ready");
-                if get_startminimized(app_handle) {
+                // Launched from the file manager with files to send: show
+                // the window even if "start minimized" is on.
+                let sending = app_handle
+                    .try_state::<integration::PendingSend>()
+                    .is_some_and(|p| p.0.lock().unwrap().is_some());
+                if get_startminimized(app_handle) && !sending {
                     #[cfg(not(target_os = "macos"))]
                     app_handle
                         .get_webview_window("main")

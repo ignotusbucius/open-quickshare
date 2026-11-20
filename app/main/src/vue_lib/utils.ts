@@ -1,6 +1,6 @@
 import { Visibility } from '@martichou/core_lib/bindings/Visibility';
 import { TauriVM } from './helper/ParamsHelper';
-import { autostartKey, deviceNameKey, trustedKey, DisplayedItem, downloadPathKey, numberToVisibility, realcloseKey, startminimizedKey, stateToDisplay, visibilityKey, visibilityToNumber } from './types';
+import { autostartKey, deviceNameKey, trustedKey, DisplayedItem, downloadPathKey, numberToVisibility, realcloseKey, startminimizedKey, filemanagerMenuKey, stateToDisplay, visibilityKey, visibilityToNumber } from './types';
 import { SendInfo } from '@martichou/core_lib/bindings/SendInfo';
 import { ChannelMessage } from '@martichou/core_lib/bindings/ChannelMessage';
 import { ChannelAction } from '@martichou/core_lib';
@@ -120,6 +120,16 @@ async function setStartMinimized(vm: TauriVM, startminimized: boolean) {
 
 async function getStartMinimized(vm: TauriVM) {
 	vm.startminimized = await vm.store.get(startminimizedKey) ?? false;
+}
+
+/** "Send via Quick Share" in Dolphin / Nautilus context menus. */
+async function setFileManagerMenu(vm: TauriVM, enabled: boolean) {
+	await vm.invoke('set_file_manager_menu', { enabled });
+	vm.filemanagerMenu = enabled;
+}
+
+async function getFileManagerMenu(vm: TauriVM) {
+	vm.filemanagerMenu = await vm.store.get(filemanagerMenuKey) ?? true;
 }
 
 async function setVisibility(vm: TauriVM, visibility: Visibility) {
@@ -342,6 +352,8 @@ export const utils = {
 	getLatestVersion,
 	setStartMinimized,
 	getStartMinimized,
+	setFileManagerMenu,
+	getFileManagerMenu,
 	setDeviceName,
 	getDeviceName,
 	getTrusted,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { utils } from '../vue_lib';
+import { utils, useToastStore, ToastType } from '../vue_lib';
 import { PropType, ref, watchEffect } from 'vue';
 import { TauriVM } from '../vue_lib/helper/ParamsHelper';
 
@@ -19,6 +19,17 @@ async function dropTrusted(name: string) {
 }
 
 const emit = defineEmits(['close']);
+
+const toastStore = useToastStore();
+async function toggleFileManagerMenu() {
+	const enable = !props.vm.filemanagerMenu;
+	try {
+		await utils.setFileManagerMenu(props.vm, enable);
+		toastStore.addToast(enable ? "Added to file manager menus" : "Removed from file manager menus", ToastType.Success);
+	} catch (e) {
+		toastStore.addToast(typeof e === 'string' ? e : "Couldn't update the file manager menus", ToastType.Error);
+	}
+}
 
 function openDownloadPicker() {
 	props.vm.dialogOpen({
@@ -112,6 +123,15 @@ function openDownloadPicker() {
 							<span class="text-xs opacity-60">Starts hidden in the system tray instead of opening the window</span>
 						</span>
 						<input type="checkbox" :checked="vm.startminimized" class="checkbox focus:outline-none">
+					</label>
+				</div>
+				<div class="form-control hover:bg-gray-500 hover:bg-opacity-10 rounded-xl p-3">
+					<label class="cursor-pointer flex flex-row justify-between items-center gap-3" @click="toggleFileManagerMenu()">
+						<span class="flex flex-col">
+							<span class="label-text">"Send via Quick Share" in file managers</span>
+							<span class="text-xs opacity-60">Adds it to the right-click menu of files in Dolphin and Nautilus</span>
+						</span>
+						<input type="checkbox" :checked="vm.filemanagerMenu" class="checkbox focus:outline-none">
 					</label>
 				</div>
 				<div class="form-control hover:bg-gray-500 hover:bg-opacity-10 rounded-xl p-3">

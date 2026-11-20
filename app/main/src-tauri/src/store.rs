@@ -30,6 +30,21 @@ pub fn init_default(app_handle: &AppHandle) {
     if !store.has("startminimized") {
         store.set("startminimized", false);
     }
+
+    if !store.has("filemanager_menu") {
+        store.set("filemanager_menu", true);
+    }
+}
+
+pub fn get_file_manager_menu(app_handle: &AppHandle) -> bool {
+    _get_store(app_handle)
+        .get("filemanager_menu")
+        .and_then(|json| json.as_bool())
+        .unwrap_or(true)
+}
+
+pub fn set_file_manager_menu(app_handle: &AppHandle, enabled: bool) {
+    _get_store(app_handle).set("filemanager_menu", enabled);
 }
 
 pub fn get_realclose(app_handle: &AppHandle) -> bool {

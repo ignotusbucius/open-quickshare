@@ -66,7 +66,7 @@ impl TcpServer {
                     info!("{INNER_NAME}: connect_receiver: got {:?}", i);
                     let report_id = i.id.clone();
                     if let Err(e) = self.connect(cctk, i).await {
-                        error!("{INNER_NAME}: error sending: {}", e.to_string());
+                        error!("{INNER_NAME}: error sending: {}", e);
                         // Surface the failure -- a click that only dies in the
                         // log looks like a dead button in the UI.
                         let _ = self.sender.send(ChannelMessage {

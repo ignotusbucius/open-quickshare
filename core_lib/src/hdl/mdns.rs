@@ -122,7 +122,7 @@ impl MDnsServer {
         // Unregister the mDNS service - we're shutting down
         let receiver = self.daemon.unregister(self.service_info.get_fullname())?;
         if let Ok(event) = receiver.recv() {
-            info!("MDnsServer: service unregistered: {:?}", &event);
+            info!("MDnsServer: service unregistered: {:?}", event);
         }
 
         Ok(())

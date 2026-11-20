@@ -5,7 +5,7 @@ use bluer::UuidExt;
 use bluer::adv::Advertisement;
 use bytes::Bytes;
 use once_cell::sync::Lazy;
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 use tokio::sync::Notify;
 use tokio::sync::watch;

@@ -1,4 +1,6 @@
 version: 2
+# Minor/patch updates are batched into one PR per ecosystem; each major update
+# gets its own PR, so one breaking major can't block every safe bump.
 updates:
   # npm packages
   - package-ecosystem: 'npm'
@@ -11,6 +13,27 @@ updates:
       dependencies:
         patterns:
           - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
+    ignore:
+      # v4 changes default styles and needs Safari 16.4+/Chrome 111+ (the
+      # build targets safari15/chrome105); a deliberate migration, not a bump.
+      - dependency-name: 'tailwindcss'
+        update-types: ['version-update:semver-major']
+      # The JS API must stay on the same minor line as the Rust tauri crates
+      # (app/main/src-tauri); bump both sides together by hand.
+      - dependency-name: '@tauri-apps/*'
+        update-types: ['version-update:semver-minor']
+      # Keep in step with CI's Node 20 (these majors require Node >= 22).
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'vitest'
+        versions: ['>=5']
+      - dependency-name: 'concurrently'
+        versions: ['>=10']
+      - dependency-name: 'postcss-import'
+        versions: ['>=17']
 
   # rust packages
   - package-ecosystem: 'cargo'
@@ -20,9 +43,19 @@ updates:
     commit-message:
       prefix: 'deps(core_lib): '
     groups:
+      # p256's ecdh pins digest/hkdf/sha2; these only move together.
+      rustcrypto:
+        patterns:
+          - 'p256'
+          - 'hmac'
+          - 'hkdf'
+          - 'sha2'
       dependencies:
         patterns:
           - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
 
   - package-ecosystem: 'cargo'
     directory: '/app/main/src-tauri'
@@ -31,9 +64,17 @@ updates:
     commit-message:
       prefix: 'deps(main-rust): '
     groups:
+      # tauri and its plugins must stay on matching versions.
+      tauri:
+        patterns:
+          - 'tauri'
+          - 'tauri-*'
       dependencies:
         patterns:
           - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
 
   # github actions
   - package-ecosystem: 'github-actions'

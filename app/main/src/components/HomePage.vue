@@ -62,7 +62,7 @@
 							<p v-if="item.total_bytes" class="text-xs opacity-60 mt-1">
 								{{ fmtBytes(item.ack_bytes ?? 0) }} of {{ fmtBytes(item.total_bytes) }}<span
 									v-if="rates[item.id] && rates[item.id].speed > 1024"> · {{ fmtBytes(rates[item.id].speed) }}/s · {{
-										Math.max(1, Math.round((item.total_bytes - (item.ack_bytes ?? 0)) / rates[item.id].speed)) }}s left</span>
+									Math.max(1, Math.round((item.total_bytes - (item.ack_bytes ?? 0)) / rates[item.id].speed)) }}s left</span>
 							</p>
 							<div class="flex flex-row justify-end gap-4 mt-1">
 								<p

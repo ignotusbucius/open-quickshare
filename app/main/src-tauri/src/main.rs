@@ -344,12 +344,12 @@ fn rs2js_channelmessage(message: ChannelMessage, manager: &AppHandle) {
         return;
     };
 
-    info!("rs2js_channelmessage: {:?}", &front);
+    info!("rs2js_channelmessage: {:?}", front);
     manager.emit("rs2js_channelmessage", &front).unwrap();
 }
 
 fn rs2js_endpointinfo(message: EndpointInfo, manager: &AppHandle) {
-    info!("rs2js_endpointinfo: {:?}", &message);
+    info!("rs2js_endpointinfo: {:?}", message);
     manager.emit("rs2js_endpointinfo", &message).unwrap();
 }
 

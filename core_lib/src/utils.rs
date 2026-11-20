@@ -10,7 +10,7 @@ use hkdf::Hkdf;
 use num_bigint::{BigUint, ToBigInt};
 use p256::elliptic_curve::rand_core::OsRng;
 use p256::{PublicKey, SecretKey};
-use rand::{Rng, RngCore};
+use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tokio::io::AsyncReadExt;

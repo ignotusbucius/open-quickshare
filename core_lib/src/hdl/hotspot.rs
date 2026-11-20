@@ -6,7 +6,7 @@
 //! and tear it down when the transfer ends.
 use std::net::Ipv4Addr;
 
-use rand::Rng;
+use rand::RngExt;
 use tokio::process::Command;
 
 const CON_NAME: &str = "packet-qs-hotspot";

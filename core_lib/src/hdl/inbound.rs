@@ -11,7 +11,7 @@ use p256::ecdh::diffie_hellman;
 use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use p256::{EncodedPoint, PublicKey};
 use prost::Message;
-use rand::Rng;
+use rand::RngExt;
 use sha2::{Digest, Sha256, Sha512};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -374,12 +374,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
         let smsg = SecureMessage::decode(&*data)?;
         let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
         hmac.update(&smsg.header_and_body);
-        if !hmac
-            .finalize()
-            .into_bytes()
-            .as_slice()
-            .eq(smsg.signature.as_slice())
-        {
+        if !hmac.finalize().into_bytes()[..].eq(smsg.signature.as_slice()) {
             return Err(anyhow!("hmac!=signature"));
         }
         let header_and_body = HeaderAndBody::decode(&*smsg.header_and_body)?;
@@ -479,7 +474,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
                 debug!("Handling State::Initial frame");
                 let frame = location_nearby_connections::OfflineFrame::decode(&*frame_data)?;
                 let rdi = self.process_connection_request(&frame)?;
-                info!("RemoteDeviceInfo: {:?}", &rdi);
+                info!("RemoteDeviceInfo: {:?}", rdi);
 
                 // Advance current state
                 self.update_state(
@@ -722,7 +717,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
         }
 
         let sha512 = Sha512::digest(frame_data);
-        if self.state.cipher_commitment.as_ref().unwrap().commitment() != sha512.as_slice() {
+        if self.state.cipher_commitment.as_ref().unwrap().commitment() != &sha512[..] {
             error!("cipher_commitment isn't equals to sha512(frame_data)");
             return Err(anyhow!("UKey2: cipher_commitment != sha512"));
         }
@@ -808,12 +803,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
     ) -> Result<(), anyhow::Error> {
         let mut hmac = HmacSha256::new_from_slice(self.state.recv_hmac_key.as_ref().unwrap())?;
         hmac.update(&smsg.header_and_body);
-        if !hmac
-            .finalize()
-            .into_bytes()
-            .as_slice()
-            .eq(smsg.signature.as_slice())
-        {
+        if !hmac.finalize().into_bytes()[..].eq(smsg.signature.as_slice()) {
             return Err(anyhow!("hmac!=signature"));
         }
 
@@ -1537,7 +1527,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             let mfi = self.state.transferred_files.get_mut(&id).unwrap();
 
             let file = File::create(&mfi.file_url)?;
-            info!("Created file: {:?}", &file);
+            info!("Created file: {:?}", file);
             mfi.file = Some(file);
         }
 

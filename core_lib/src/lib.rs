@@ -10,7 +10,7 @@ use channel::ChannelMessage;
 use hdl::BleAdvertiser;
 use hdl::MDnsDiscovery;
 use once_cell::sync::Lazy;
-use rand::Rng;
+use rand::RngExt;
 use rand::distr::Alphanumeric;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc, watch};

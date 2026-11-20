@@ -4358,7 +4358,7 @@ dependencies = [
 
 [[package]]
 name = "rquickshare"
-version = "0.16.1"
+version = "0.16.2"
 dependencies = [
  "anyhow",
  "fern",

@@ -34,7 +34,8 @@ export default defineConfig({
 		outDir: './dist',
 		// See https://tauri.app/v1/references/webview-versions for details
 		target: process.env.TAURI_PLATFORM == 'windows' ? 'chrome105' : 'safari15',
-		minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+		// Vite 8 minifies with Oxc; 'esbuild' would need esbuild installed separately.
+		minify: !process.env.TAURI_DEBUG ? 'oxc' : false,
 		sourcemap: !!process.env.TAURI_DEBUG,
 		emptyOutDir: true,
 	},

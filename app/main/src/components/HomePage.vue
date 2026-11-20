@@ -308,10 +308,8 @@ export default {
 			await this.getDownloadPath(this);
 
 			// Check permission for notification
-			let permissionGranted = await isPermissionGranted();
-			if (!permissionGranted) {
-				const permission = await requestPermission();
-				permissionGranted = permission === 'granted';
+			if (!await isPermissionGranted()) {
+				await requestPermission();
 			}
 
 			this.unlisten.push(

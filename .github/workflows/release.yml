@@ -69,6 +69,12 @@ jobs:
           grep -q '^export GDK_BACKEND=x11' "$hook"
           sed -i 's|^export GDK_BACKEND=x11.*|if [ -n "${DISPLAY:-}" ]; then export GDK_BACKEND="${GDK_BACKEND:-x11}"; fi|' "$hook"
           grep -n GDK_BACKEND "$hook"
+          # The hook picks Adwaita dark/light from the GTK theme *name* only, so
+          # a dark desktop with a plain "Adwaita" theme got light GTK dialogs
+          # (file picker; CSD titlebar on Wayland). Honour color-scheme too.
+          grep -q '^gsettings get org.gnome.desktop.interface gtk-theme' "$hook"
+          sed -i 's|^gsettings get org.gnome.desktop.interface gtk-theme 2> /dev/null \| grep -qi "dark"|{ gsettings get org.gnome.desktop.interface color-scheme 2> /dev/null \| grep -qi "dark" \|\| gsettings get org.gnome.desktop.interface gtk-theme 2> /dev/null \| grep -qi "dark"; }|' "$hook"
+          grep -n 'GTK_THEME_VARIANT=' "$hook"
           wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x appimagetool-x86_64.AppImage
           rm "$img"

@@ -207,7 +207,6 @@ import { getStore } from "@tauri-apps/plugin-store";
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
 import { disable, enable } from '@tauri-apps/plugin-autostart';
 import { open as tauriDialog } from '@tauri-apps/plugin-dialog';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 
 import { ChannelMessage } from '@martichou/core_lib/bindings/ChannelMessage';
 import { EndpointInfo } from '@martichou/core_lib/bindings/EndpointInfo';
@@ -520,10 +519,11 @@ export default {
 		},
 		writeToClipboard: async function(text: string) {
 			try {
-				await writeText(text);
+				// Rust side: GTK clipboard first so it works on Wayland without XWayland.
+				await invoke('copy_text', { text });
 				this.toastStore.addToast("Copied to clipboard", ToastType.Success);
 			} catch (e) {
-				this.toastStore.addToast("Unknown error while copying text", ToastType.Error);
+				this.toastStore.addToast(typeof e === 'string' ? e : "Unknown error while copying text", ToastType.Error);
 				console.error("Error copying text", e);
 			}
 		},

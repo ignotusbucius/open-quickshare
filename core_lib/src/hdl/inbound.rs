@@ -5,11 +5,10 @@ use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use bytes::Bytes;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use libaes::{AES_256_KEY_LEN, Cipher};
 use p256::ecdh::diffie_hellman;
-use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use p256::{EncodedPoint, PublicKey};
+use p256::elliptic_curve::sec1::ToSec1Point;
 use prost::Message;
 use rand::RngExt;
 use sha2::{Digest, Sha256, Sha512};
@@ -38,7 +37,7 @@ use crate::sharing_nearby::wifi_credentials_metadata::SecurityType;
 use crate::sharing_nearby::{paired_key_result_frame, text_metadata};
 use crate::utils::{
     DeviceType, RemoteDeviceInfo, encode_point, gen_ecdsa_keypair, gen_random, get_download_dir,
-    hkdf_extract_expand, stream_read_exact, to_four_digit_string,
+    hkdf_extract_expand, p256_public_key, stream_read_exact, to_four_digit_string,
 };
 use crate::{location_nearby_connections, sharing_nearby};
 
@@ -662,7 +661,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
 
         let (secret_key, public_key) = gen_ecdsa_keypair();
 
-        let encoded_point = public_key.to_encoded_point(false);
+        let encoded_point = public_key.to_sec1_point(false);
         let x = encoded_point.x().unwrap();
         let y = encoded_point.y().unwrap();
 
@@ -1589,21 +1588,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> InboundRequest<S> {
             .ec_p256_public_key
             .ok_or_else(|| anyhow!("Missing required fields"))?;
 
-        let mut bytes = vec![0x04];
-        // Ensure no more than 32 bytes for the keys
-        if peer_p256_key.x.len() > 32 {
-            bytes.extend_from_slice(&peer_p256_key.x[peer_p256_key.x.len() - 32..]);
-        } else {
-            bytes.extend_from_slice(&peer_p256_key.x);
-        }
-        if peer_p256_key.y.len() > 32 {
-            bytes.extend_from_slice(&peer_p256_key.y[peer_p256_key.y.len() - 32..]);
-        } else {
-            bytes.extend_from_slice(&peer_p256_key.y);
-        }
-
-        let encoded_point = EncodedPoint::from_bytes(bytes)?;
-        let peer_key = PublicKey::from_encoded_point(&encoded_point).unwrap();
+        let peer_key = p256_public_key(&peer_p256_key.x, &peer_p256_key.y)?;
         let priv_key = self.state.private_key.as_ref().unwrap();
 
         let dhs = diffie_hellman(priv_key.to_nonzero_scalar(), peer_key.as_affine());

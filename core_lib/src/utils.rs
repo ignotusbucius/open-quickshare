@@ -8,7 +8,7 @@ use bytes::Bytes;
 use get_if_addrs::{IfAddr, get_if_addrs};
 use hkdf::Hkdf;
 use num_bigint::{BigUint, ToBigInt};
-use p256::elliptic_curve::rand_core::OsRng;
+use p256::elliptic_curve::Generate;
 use p256::{PublicKey, SecretKey};
 use rand::{Rng, RngExt};
 use serde::{Deserialize, Serialize};
@@ -135,10 +135,38 @@ pub async fn stream_read_exact<S: tokio::io::AsyncRead + Unpin>(
 }
 
 pub fn gen_ecdsa_keypair() -> (SecretKey, PublicKey) {
-    let secret_key = SecretKey::random(&mut OsRng);
+    // OS RNG (getrandom); panics only if the OS has no entropy source.
+    let secret_key = SecretKey::generate();
     let public_key = secret_key.public_key();
 
     (secret_key, public_key)
+}
+
+/// Left-pads / strips one UKEY2 P-256 coordinate to exactly 32 bytes. Peers
+/// send them as minimal two's-complement big-endian integers: 33 bytes when
+/// the top bit is set (sign byte), and 31 or fewer when the value has leading
+/// zero bytes.
+fn p256_coordinate(c: &[u8]) -> Result<[u8; 32], anyhow::Error> {
+    let significant = match c.iter().position(|&b| b != 0) {
+        Some(i) => &c[i..],
+        None => &[][..],
+    };
+    if significant.len() > 32 {
+        return Err(anyhow!("P-256 coordinate too long ({} bytes)", c.len()));
+    }
+    let mut out = [0u8; 32];
+    out[32 - significant.len()..].copy_from_slice(significant);
+    Ok(out)
+}
+
+/// The peer's UKEY2 public key from its x/y coordinates. Rejects points that
+/// aren't on the curve (an error, not a panic: this is remote input).
+pub fn p256_public_key(x: &[u8], y: &[u8]) -> Result<PublicKey, anyhow::Error> {
+    let mut sec1 = Vec::with_capacity(65);
+    sec1.push(0x04);
+    sec1.extend_from_slice(&p256_coordinate(x)?);
+    sec1.extend_from_slice(&p256_coordinate(y)?);
+    PublicKey::from_sec1_bytes(&sec1).map_err(|_| anyhow!("Peer sent an invalid P-256 public key"))
 }
 
 pub fn encode_point(unsigned: Bytes) -> Result<Vec<u8>, anyhow::Error> {
@@ -279,5 +307,77 @@ mod tests {
 
         assert_eq!(parse_info.1, device_name);
         assert_eq!(parse_info.0, device_type);
+    }
+
+    // --- UKEY2 crypto: guards for the RustCrypto upgrades -------------------
+
+    #[test]
+    fn hkdf_sha256_rfc5869_case1() {
+        let ikm = [0x0bu8; 22];
+        let salt = hex::decode("000102030405060708090a0b0c").unwrap();
+        let info = hex::decode("f0f1f2f3f4f5f6f7f8f9").unwrap();
+        let okm = hkdf_extract_expand(&salt, &ikm, &info, 42).unwrap();
+        assert_eq!(
+            hex::encode(okm),
+            "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf34007208d5b887185865"
+        );
+    }
+
+    #[test]
+    fn hmac_sha256_rfc4231_case2() {
+        use hmac::{Hmac, KeyInit, Mac};
+        let mut mac = Hmac::<Sha256>::new_from_slice(b"Jefe").unwrap();
+        mac.update(b"what do ya want for nothing?");
+        let tag = hex::decode("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+            .unwrap();
+        assert!(mac.clone().verify_slice(&tag).is_ok());
+        let mut bad = tag.clone();
+        bad[31] ^= 1;
+        assert!(mac.verify_slice(&bad).is_err());
+    }
+
+    /// Our key, encoded exactly as it goes on the wire (`encode_point` of the
+    /// SEC1 x/y), must parse back via `p256_public_key` and agree on the ECDH
+    /// secret — including coordinates with leading zero bytes, which arrive
+    /// shorter than 32 bytes.
+    #[test]
+    fn p256_wire_roundtrip_and_ecdh() {
+        use p256::ecdh::diffie_hellman;
+        use p256::elliptic_curve::sec1::ToSec1Point;
+
+        let (mut short_x, mut short_y, mut n) = (false, false, 0);
+        while n < 64 || !(short_x && short_y) {
+            assert!(n < 200_000, "no leading-zero coordinates generated");
+            n += 1;
+            let (sk_a, pk_a) = gen_ecdsa_keypair();
+            let (sk_b, pk_b) = gen_ecdsa_keypair();
+            let point = pk_a.to_sec1_point(false);
+            let (x, y) = (point.x().unwrap(), point.y().unwrap());
+            if x[0] == 0 {
+                short_x = true;
+            } else if y[0] == 0 {
+                short_y = true;
+            } else if n > 64 {
+                continue;
+            }
+            let wire_x = encode_point(Bytes::from(x.to_vec())).unwrap();
+            let wire_y = encode_point(Bytes::from(y.to_vec())).unwrap();
+            let parsed = p256_public_key(&wire_x, &wire_y).unwrap();
+            assert_eq!(parsed, pk_a);
+
+            let ab = diffie_hellman(sk_b.to_nonzero_scalar(), parsed.as_affine());
+            let ba = diffie_hellman(sk_a.to_nonzero_scalar(), pk_b.as_affine());
+            assert_eq!(ab.raw_secret_bytes(), ba.raw_secret_bytes());
+        }
+    }
+
+    #[test]
+    fn p256_rejects_bad_points() {
+        // Not on the curve.
+        assert!(p256_public_key(&[1u8; 32], &[2u8; 32]).is_err());
+        // Coordinate too long even after stripping sign/leading zeros.
+        assert!(p256_public_key(&[0xffu8; 33], &[1u8; 32]).is_err());
+        // Empty input must not panic.
+        assert!(p256_public_key(&[], &[]).is_err());
     }
 }

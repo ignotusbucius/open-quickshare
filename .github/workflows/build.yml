@@ -32,7 +32,11 @@ jobs:
           sudo apt-get install -y libdbus-1-dev
       - run: |
           cd ./core_lib
-          cargo build --release
+          set -o pipefail
+          cargo build --release --locked 2>&1 | tee ../build.log
+          # Code a future Rust release will reject breaks downstream builds
+          # (e.g. AUR on newer toolchains) — fail now, not then.
+          ! grep -q "rejected by a future version of Rust" ../build.log
 
   build_app:
     runs-on: ubuntu-24.04
@@ -66,4 +70,6 @@ jobs:
           pnpm install
           pnpm vite:build
           cd src-tauri
-          cargo build --release
+          set -o pipefail
+          cargo build --release --locked 2>&1 | tee ../build.log
+          ! grep -q "rejected by a future version of Rust" ../build.log

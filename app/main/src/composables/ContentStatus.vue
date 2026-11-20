@@ -48,7 +48,7 @@ function openFilePicker() {
 		<span v-else>Nearby devices</span>
 	</h3>
 
-	<div v-if="props.vm.displayedIsEmpty && props.vm.endpointsInfo.length === 0" class="m-auto status-indicator status-indicator--success status-indicator--xl">
+	<div v-if="props.vm.displayedIsEmpty && props.vm.endpointsInfo.length === 0" class="m-auto shrink-0 status-indicator status-indicator--success status-indicator--xl">
 		<div class="circle circle--animated circle-main" />
 		<div class="circle circle--animated circle-secondary" />
 		<div class="circle circle--animated circle-tertiary" />
@@ -56,7 +56,7 @@ function openFilePicker() {
 
 	<div
 		v-if="props.vm.displayedIsEmpty && props.vm.outboundPayload === undefined" class="w-full border dark:border-neutral-700
-        rounded-2xl p-6 flex flex-col justify-center items-center transition duration-150 ease-in-out mt-auto"
+        rounded-2xl p-6 flex flex-col shrink-0 justify-center items-center text-center transition duration-150 ease-in-out mt-auto"
 		:class="{'border-green-200 bg-green-100 dark:border-green-700 dark:bg-neutral-700 scale-105': props.vm.isDragHovering}">
 		<svg
 			xmlns="http://www.w3.org/2000/svg" height="24"

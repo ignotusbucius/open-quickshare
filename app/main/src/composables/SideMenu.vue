@@ -15,7 +15,7 @@ const pluralize = (n: number, s: string) => n === 1 ? s : `${s}s`;
 </script>
 
 <template>
-	<div class="w-72 p-3" v-if="props.vm.outboundPayload === undefined">
+	<div class="w-56 md:w-72 shrink-0 p-3" v-if="props.vm.outboundPayload === undefined">
 		<p class="mt-4 mb-2 pt-3 px-3">
 			Visibility state
 		</p>
@@ -50,7 +50,7 @@ const pluralize = (n: number, s: string) => n === 1 ? s : `${s}s`;
 			</span>
 		</p>
 	</div>
-	<div class="w-72 p-6 flex flex-col justify-between" v-else>
+	<div class="w-56 md:w-72 shrink-0 p-6 flex flex-col justify-between" v-else>
 		<div>
 			<p class="mt-4 mb-2">
 				Sharing {{ props.vm.outboundPayload.Files.length }} {{ pluralize(props.vm.outboundPayload.Files.length, "file") }}

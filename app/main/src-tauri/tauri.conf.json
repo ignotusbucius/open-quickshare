@@ -47,6 +47,8 @@
         "title": "Open QuickShare",
         "width": 900,
         "height": 600,
+        "minWidth": 560,
+        "minHeight": 420,
         "resizable": true,
         "fullscreen": false
       }

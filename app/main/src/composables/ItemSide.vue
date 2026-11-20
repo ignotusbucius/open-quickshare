@@ -22,15 +22,25 @@ defineProps({
 				v-if="!item.ack_bytes && (item.connecting || item.state === 'SentUkeyClientInit' || item.state === 'SentIntroduction')"
 				width="62" height="62" viewBox="0 0 250 250"
 				class="circular-progress spinner-ring absolute inset-0">
-				<circle class="bg" />
-				<circle class="fg" />
+				<circle
+					class="bg" cx="125" cy="125" r="119"
+					stroke-width="12" fill="none" />
+				<circle
+					class="fg" cx="125" cy="125" r="119"
+					stroke-width="12" fill="none" stroke-linecap="round"
+					pathLength="100" stroke-dasharray="25 100" transform="rotate(-90 125 125)" />
 			</svg>
 			<svg
 				v-if="item.ack_bytes" width="62" height="62" viewBox="0 0 250 250"
-				class="circular-progress absolute inset-0" :style="utils.getProgress(item)"
+				class="circular-progress absolute inset-0"
 				:class="{'error': item.state && ['Cancelled', 'Rejected', 'Disconnected'].includes(item.state)}">
-				<circle class="bg" />
-				<circle class="fg" />
+				<circle
+					class="bg" cx="125" cy="125" r="119"
+					stroke-width="12" fill="none" />
+				<circle
+					class="fg" cx="125" cy="125" r="119"
+					stroke-width="12" fill="none" stroke-linecap="round"
+					pathLength="100" :stroke-dasharray="`${utils.getProgress(item)} 100`" transform="rotate(-90 125 125)" />
 			</svg>
 			<div class="relative w-[52px] h-[52px] rounded-full bg-white dark:bg-neutral-600">
 				<svg

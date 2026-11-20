@@ -240,9 +240,10 @@ function fmtBytes(n: number): string {
 	return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
-function getProgress(item: DisplayedItem): string {
-	const value = item.ack_bytes! / item.total_bytes! * 100;
-	return `--progress: ${value}`;
+/** Transfer progress as 0–100 (for the ring's stroke-dasharray). */
+function getProgress(item: DisplayedItem): number {
+	if (!item.ack_bytes || !item.total_bytes) return 0;
+	return Math.min(100, Math.max(0, item.ack_bytes / item.total_bytes * 100));
 }
 
 async function setDownloadPath(vm: TauriVM, dest: string) {

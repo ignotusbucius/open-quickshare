@@ -169,9 +169,79 @@ async fn nmcli(args: &[&str]) -> Result<String, anyhow::Error> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+struct HotspotProfile {
+    label: &'static str,
+    band: &'static str,
+    channel: Option<&'static str>,
+    width: Option<&'static str>,
+    default_freq: i32,
+}
+
+/// Candidate AP profiles in order of preference.
+///
+/// NetworkManager's `nmcli device wifi hotspot` defaults to 20 MHz width and
+/// `band bg` (2.4 GHz), which caps real-world throughput at ~15-24 MB/s.
+/// Using `nmcli connection add` lets us request non-DFS 5 GHz channels
+/// (UNII-3 ch 149, UNII-1 ch 36) at 80 MHz width (~80-90+ MB/s on 2x2 MIMO),
+/// falling back gracefully on older NetworkManager versions, regulatory
+/// restrictions (e.g. Intel LAR `NO-IR`), or 2.4 GHz-only adapters.
+const HOTSPOT_PROFILES: &[HotspotProfile] = &[
+    HotspotProfile {
+        label: "5GHz-ch149-80MHz",
+        band: "a",
+        channel: Some("149"),
+        width: Some("80"),
+        default_freq: 5745,
+    },
+    HotspotProfile {
+        label: "5GHz-ch149-40MHz",
+        band: "a",
+        channel: Some("149"),
+        width: Some("40"),
+        default_freq: 5745,
+    },
+    HotspotProfile {
+        label: "5GHz-ch36-80MHz",
+        band: "a",
+        channel: Some("36"),
+        width: Some("80"),
+        default_freq: 5180,
+    },
+    HotspotProfile {
+        label: "5GHz-ch149",
+        band: "a",
+        channel: Some("149"),
+        width: None,
+        default_freq: 5745,
+    },
+    HotspotProfile {
+        label: "2.4GHz-auto",
+        band: "bg",
+        channel: None,
+        width: None,
+        default_freq: 2437,
+    },
+];
+
+/// Checks whether `ifname` is currently in AP mode via `iw dev <ifname> info`.
+/// Returns `true` if `iw` is unavailable so we don't reject working setups.
+async fn confirm_ap_mode(ifname: &str) -> bool {
+    match Command::new("iw")
+        .args(["dev", ifname, "info"])
+        .output()
+        .await
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).contains("type AP"),
+        Ok(_) => false,
+        Err(_) => true,
+    }
+}
+
 /// Brings up a WPA2 hotspot on the Wi-Fi interface and returns its live
-/// credentials. Single-channel radios are taken off their current network for
-/// the duration; NetworkManager reconnects them after teardown.
+/// credentials. Prefers 5 GHz (80 MHz on non-DFS channels) and falls back to
+/// 2.4 GHz if the adapter, regulatory domain, or NetworkManager rejects it.
+/// Single-channel radios are taken off their current network for the duration;
+/// NetworkManager reconnects them after teardown.
 pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
     let devs = nmcli(&["-t", "-f", "DEVICE,TYPE", "device"]).await?;
     let ifname = devs
@@ -192,14 +262,68 @@ pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
         (format!("DIRECT-{suffix}-packet"), password)
     };
 
-    // Drop any stale instance, then bring the hotspot up. 2.4GHz for reach and
-    // because every client supports it.
-    let _ = nmcli(&["connection", "delete", CON_NAME]).await;
-    nmcli(&[
-        "device", "wifi", "hotspot", "ifname", &ifname, "con-name", CON_NAME, "ssid", &ssid,
-        "band", "bg", "password", &password,
-    ])
-    .await?;
+    let mut selected_freq = None;
+    let mut last_err = None;
+    for profile in HOTSPOT_PROFILES {
+        let _ = nmcli(&["connection", "delete", CON_NAME]).await;
+        let mut args = vec![
+            "connection", "add", "type", "wifi", "ifname", &ifname, "con-name", CON_NAME,
+            "autoconnect", "no", "wifi.mode", "ap", "wifi.band", profile.band, "wifi.ssid", &ssid,
+            "wifi.powersave", "2", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.proto", "rsn",
+            "wifi-sec.pairwise", "ccmp", "wifi-sec.psk", &password, "ipv4.method", "shared",
+            "ipv6.method", "ignore",
+        ];
+        if let Some(ch) = profile.channel {
+            args.extend(["wifi.channel", ch]);
+        }
+        if let Some(width) = profile.width {
+            args.extend(["wifi.channel-width", width]);
+        }
+
+        match nmcli(&args).await {
+            Ok(_) => match nmcli(&["connection", "up", CON_NAME]).await {
+                Ok(_) => {
+                    // Some drivers (e.g. Intel LAR) can report activation
+                    // success while dropping out of AP mode shortly after.
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    if confirm_ap_mode(&ifname).await {
+                        let _ = Command::new("iw")
+                            .args(["dev", &ifname, "set", "power_save", "off"])
+                            .output()
+                            .await;
+                        debug!("Hotspot: activated profile {}", profile.label);
+                        selected_freq = Some(profile.default_freq);
+                        last_err = None;
+                        break;
+                    }
+                    debug!(
+                        "Hotspot: {} reported up but {ifname} is not in AP mode, trying next",
+                        profile.label
+                    );
+                    let _ = nmcli(&["connection", "delete", CON_NAME]).await;
+                    last_err = Some(anyhow::anyhow!(
+                        "{} did not enter AP mode on {ifname}",
+                        profile.label
+                    ));
+                }
+                Err(e) => {
+                    debug!("Hotspot: {} failed to activate: {e}", profile.label);
+                    let _ = nmcli(&["connection", "delete", CON_NAME]).await;
+                    last_err = Some(e);
+                }
+            },
+            Err(e) => {
+                debug!("Hotspot: {} profile rejected: {e}", profile.label);
+                last_err = Some(e);
+            }
+        }
+    }
+
+    let Some(mut frequency) = selected_freq else {
+        let _ = nmcli(&["connection", "delete", CON_NAME]).await;
+        let err = last_err.unwrap_or_else(|| anyhow::anyhow!("hotspot failed on {ifname}"));
+        return Err(err);
+    };
 
     // Our address on the hotspot (the DHCP gateway) appears once activation
     // completes.
@@ -223,7 +347,6 @@ pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
     };
 
     // Operating frequency (MHz) for the credentials; best-effort.
-    let mut frequency = 2437;
     if let Ok(o) = Command::new("iw")
         .args(["dev", &ifname, "info"])
         .output()

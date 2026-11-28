@@ -4,12 +4,18 @@
 //! bring up a NetworkManager hotspot (`shared` mode gives us DHCP/NAT at the
 //! gateway address), hand its credentials to the phone over the BLE channel,
 //! and tear it down when the transfer ends.
+use std::collections::HashSet;
 use std::net::Ipv4Addr;
+use std::sync::LazyLock;
 
 use rand::RngExt;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 
 const CON_NAME: &str = "packet-qs-hotspot";
+/// Serializes hotspot setup attempts so concurrent BWU retries cannot clobber
+/// each other's `packet-qs-hotspot` NetworkManager profile.
+static HOTSPOT_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 /// Fixed listener port on the hotspot, so a firewall rule can be added once:
 /// `sudo firewall-cmd --zone=nm-shared --add-port=61812/tcp`
 pub const HOTSPOT_TCP_PORT: u16 = 61812;
@@ -169,62 +175,82 @@ async fn nmcli(args: &[&str]) -> Result<String, anyhow::Error> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-struct HotspotProfile {
+struct FiveGhzCandidate {
     label: &'static str,
-    band: &'static str,
-    channel: Option<&'static str>,
-    width: Option<&'static str>,
+    channel: u16,
+    channel_str: &'static str,
     default_freq: i32,
 }
 
-/// Candidate AP profiles in order of preference.
-///
-/// NetworkManager's `nmcli device wifi hotspot` defaults to 20 MHz width and
-/// `band bg` (2.4 GHz), which caps real-world throughput at ~15-24 MB/s.
-/// Using `nmcli connection add` lets us request non-DFS 5 GHz channels
-/// (UNII-3 ch 149, UNII-1 ch 36) at 80 MHz width (~80-90+ MB/s on 2x2 MIMO),
-/// falling back gracefully on older NetworkManager versions, regulatory
-/// restrictions (e.g. Intel LAR `NO-IR`), or 2.4 GHz-only adapters.
-const HOTSPOT_PROFILES: &[HotspotProfile] = &[
-    HotspotProfile {
-        label: "5GHz-ch149-80MHz",
-        band: "a",
-        channel: Some("149"),
-        width: Some("80"),
-        default_freq: 5745,
-    },
-    HotspotProfile {
-        label: "5GHz-ch149-40MHz",
-        band: "a",
-        channel: Some("149"),
-        width: Some("40"),
-        default_freq: 5745,
-    },
-    HotspotProfile {
-        label: "5GHz-ch36-80MHz",
-        band: "a",
-        channel: Some("36"),
-        width: Some("80"),
-        default_freq: 5180,
-    },
-    HotspotProfile {
+/// Non-DFS 5 GHz channels to try when the kernel/regulatory domain permits
+/// standalone AP beaconing (no `no IR`, `disabled`, or `radar detection`).
+const FIVE_GHZ_CANDIDATES: &[FiveGhzCandidate] = &[
+    FiveGhzCandidate {
         label: "5GHz-ch149",
-        band: "a",
-        channel: Some("149"),
-        width: None,
+        channel: 149,
+        channel_str: "149",
         default_freq: 5745,
     },
-    HotspotProfile {
-        label: "2.4GHz-auto",
-        band: "bg",
-        channel: None,
-        width: None,
-        default_freq: 2437,
+    FiveGhzCandidate {
+        label: "5GHz-ch36",
+        channel: 36,
+        channel_str: "36",
+        default_freq: 5180,
     },
 ];
 
+/// Parses `iw list` output and returns the set of 5 GHz channel numbers that
+/// allow standalone AP beaconing (i.e. not marked `disabled`, `no IR`, or
+/// `radar detection`).
+///
+/// Pre-filtering avoids asking NetworkManager to activate a disallowed channel:
+/// `wpa_supplicant` rejects `no IR` channels immediately, but NetworkManager
+/// retries for ~25 seconds before failing, which blows past Android's BWU
+/// negotiation window.
+fn parse_ap_allowed_5ghz_channels(iw_list: &str) -> HashSet<u16> {
+    let mut allowed = HashSet::new();
+    for line in iw_list.lines() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("* ") else {
+            continue;
+        };
+        let Some((freq_str, after_mhz)) = rest.split_once(" MHz [") else {
+            continue;
+        };
+        let Ok(freq_mhz) = freq_str.parse::<f32>() else {
+            continue;
+        };
+        if !(5000.0..5900.0).contains(&freq_mhz) {
+            continue;
+        }
+        let Some((ch_str, flags)) = after_mhz.split_once(']') else {
+            continue;
+        };
+        let Ok(ch) = ch_str.parse::<u16>() else {
+            continue;
+        };
+        let lower = flags.to_ascii_lowercase();
+        if lower.contains("disabled")
+            || lower.contains("no ir")
+            || lower.contains("radar detection")
+        {
+            continue;
+        }
+        allowed.insert(ch);
+    }
+    allowed
+}
+
+async fn query_ap_allowed_5ghz_channels() -> HashSet<u16> {
+    match Command::new("iw").arg("list").output().await {
+        Ok(o) if o.status.success() => {
+            parse_ap_allowed_5ghz_channels(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => HashSet::new(),
+    }
+}
+
 /// Checks whether `ifname` is currently in AP mode via `iw dev <ifname> info`.
-/// Returns `true` if `iw` is unavailable so we don't reject working setups.
 async fn confirm_ap_mode(ifname: &str) -> bool {
     match Command::new("iw")
         .args(["dev", ifname, "info"])
@@ -232,17 +258,109 @@ async fn confirm_ap_mode(ifname: &str) -> bool {
         .await
     {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).contains("type AP"),
-        Ok(_) => false,
-        Err(_) => true,
+        _ => false,
     }
 }
 
+/// Attempts to bring up a 5 GHz WPA2 AP on `candidate` (trying 80 MHz width
+/// first, then auto-width if `wifi.channel-width` is rejected by an older
+/// NetworkManager). Bounded with `--wait 4` so a driver failure never stalls
+/// the BLE bandwidth-upgrade handshake.
+async fn try_start_5ghz_ap(
+    ifname: &str,
+    ssid: &str,
+    password: &str,
+    candidate: &FiveGhzCandidate,
+) -> Option<i32> {
+    for width in [Some("80"), None] {
+        let _ = nmcli(&["connection", "delete", CON_NAME]).await;
+        let mut args = vec![
+            "connection",
+            "add",
+            "type",
+            "wifi",
+            "ifname",
+            ifname,
+            "con-name",
+            CON_NAME,
+            "autoconnect",
+            "no",
+            "wifi.mode",
+            "ap",
+            "wifi.band",
+            "a",
+            "wifi.channel",
+            candidate.channel_str,
+            "wifi.ssid",
+            ssid,
+            "wifi.powersave",
+            "2",
+            "wifi-sec.key-mgmt",
+            "wpa-psk",
+            "wifi-sec.proto",
+            "rsn",
+            "wifi-sec.pairwise",
+            "ccmp",
+            "wifi-sec.psk",
+            password,
+            "ipv4.method",
+            "shared",
+            "ipv6.method",
+            "ignore",
+        ];
+        if let Some(w) = width {
+            args.extend(["wifi.channel-width", w]);
+        }
+
+        let tag = match width {
+            Some(w) => format!("{}-{w}MHz", candidate.label),
+            None => candidate.label.to_string(),
+        };
+
+        if let Err(e) = nmcli(&args).await {
+            debug!("Hotspot: {tag} profile rejected: {e}");
+            // Only fall through to the auto-width retry if `channel-width`
+            // itself was rejected by NetworkManager.
+            continue;
+        }
+
+        match nmcli(&["--wait", "4", "connection", "up", CON_NAME]).await {
+            Ok(_) => {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                if confirm_ap_mode(ifname).await {
+                    let _ = Command::new("iw")
+                        .args(["dev", ifname, "set", "power_save", "off"])
+                        .output()
+                        .await;
+                    debug!("Hotspot: activated profile {tag}");
+                    return Some(candidate.default_freq);
+                }
+                debug!("Hotspot: {tag} reported up but {ifname} is not in AP mode");
+                let _ = nmcli(&["connection", "delete", CON_NAME]).await;
+                // If AP mode failed at the driver level, retrying the same
+                // channel without channel-width won't help.
+                return None;
+            }
+            Err(e) => {
+                debug!("Hotspot: {tag} failed to activate: {e}");
+                let _ = nmcli(&["connection", "delete", CON_NAME]).await;
+                if width.is_none() {
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Brings up a WPA2 hotspot on the Wi-Fi interface and returns its live
-/// credentials. Prefers 5 GHz (80 MHz on non-DFS channels) and falls back to
-/// 2.4 GHz if the adapter, regulatory domain, or NetworkManager rejects it.
-/// Single-channel radios are taken off their current network for the duration;
-/// NetworkManager reconnects them after teardown.
+/// credentials. Prefers 5 GHz (80 MHz on non-DFS channels when permitted by the
+/// adapter's current regulatory domain) and falls back immediately to 2.4 GHz
+/// (`band bg`) otherwise. Single-channel radios are taken off their current
+/// network for the duration; NetworkManager reconnects them after teardown.
 pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
+    let _guard = HOTSPOT_LOCK.lock().await;
+
     let devs = nmcli(&["-t", "-f", "DEVICE,TYPE", "device"]).await?;
     let ifname = devs
         .lines()
@@ -262,67 +380,38 @@ pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
         (format!("DIRECT-{suffix}-packet"), password)
     };
 
-    let mut selected_freq = None;
-    let mut last_err = None;
-    for profile in HOTSPOT_PROFILES {
-        let _ = nmcli(&["connection", "delete", CON_NAME]).await;
-        let mut args = vec![
-            "connection", "add", "type", "wifi", "ifname", &ifname, "con-name", CON_NAME,
-            "autoconnect", "no", "wifi.mode", "ap", "wifi.band", profile.band, "wifi.ssid", &ssid,
-            "wifi.powersave", "2", "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.proto", "rsn",
-            "wifi-sec.pairwise", "ccmp", "wifi-sec.psk", &password, "ipv4.method", "shared",
-            "ipv6.method", "ignore",
-        ];
-        if let Some(ch) = profile.channel {
-            args.extend(["wifi.channel", ch]);
+    // Only attempt 5 GHz on channels the kernel currently allows for AP mode
+    // (no `no IR` / `disabled` / `radar detection`), so cards in world regdom
+    // `00` (e.g. Intel LAR) fall straight through to 2.4 GHz in milliseconds.
+    let allowed_5ghz = query_ap_allowed_5ghz_channels().await;
+    let mut frequency = None;
+    for candidate in FIVE_GHZ_CANDIDATES {
+        if !allowed_5ghz.contains(&candidate.channel) {
+            debug!(
+                "Hotspot: skipping {} (ch {} restricted or unavailable in iw list)",
+                candidate.label, candidate.channel
+            );
+            continue;
         }
-        if let Some(width) = profile.width {
-            args.extend(["wifi.channel-width", width]);
-        }
-
-        match nmcli(&args).await {
-            Ok(_) => match nmcli(&["connection", "up", CON_NAME]).await {
-                Ok(_) => {
-                    // Some drivers (e.g. Intel LAR) can report activation
-                    // success while dropping out of AP mode shortly after.
-                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                    if confirm_ap_mode(&ifname).await {
-                        let _ = Command::new("iw")
-                            .args(["dev", &ifname, "set", "power_save", "off"])
-                            .output()
-                            .await;
-                        debug!("Hotspot: activated profile {}", profile.label);
-                        selected_freq = Some(profile.default_freq);
-                        last_err = None;
-                        break;
-                    }
-                    debug!(
-                        "Hotspot: {} reported up but {ifname} is not in AP mode, trying next",
-                        profile.label
-                    );
-                    let _ = nmcli(&["connection", "delete", CON_NAME]).await;
-                    last_err = Some(anyhow::anyhow!(
-                        "{} did not enter AP mode on {ifname}",
-                        profile.label
-                    ));
-                }
-                Err(e) => {
-                    debug!("Hotspot: {} failed to activate: {e}", profile.label);
-                    let _ = nmcli(&["connection", "delete", CON_NAME]).await;
-                    last_err = Some(e);
-                }
-            },
-            Err(e) => {
-                debug!("Hotspot: {} profile rejected: {e}", profile.label);
-                last_err = Some(e);
-            }
+        if let Some(freq) = try_start_5ghz_ap(&ifname, &ssid, &password, candidate).await {
+            frequency = Some(freq);
+            break;
         }
     }
 
-    let Some(mut frequency) = selected_freq else {
-        let _ = nmcli(&["connection", "delete", CON_NAME]).await;
-        let err = last_err.unwrap_or_else(|| anyhow::anyhow!("hotspot failed on {ifname}"));
-        return Err(err);
+    let mut frequency = match frequency {
+        Some(f) => f,
+        None => {
+            // Universal 2.4 GHz fallback (matches NetworkManager's default
+            // hotspot helper so every adapter and regulatory domain works).
+            let _ = nmcli(&["connection", "delete", CON_NAME]).await;
+            nmcli(&[
+                "device", "wifi", "hotspot", "ifname", &ifname, "con-name", CON_NAME, "ssid",
+                &ssid, "band", "bg", "password", &password,
+            ])
+            .await?;
+            2437
+        }
     };
 
     // Our address on the hotspot (the DHCP gateway) appears once activation
@@ -375,4 +464,38 @@ pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
         gateway,
         frequency,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ap_allowed_5ghz_channels;
+
+    #[test]
+    fn skips_no_ir_dfs_and_disabled_5ghz_channels() {
+        let sample = "\
+\t\t\t* 2412.0 MHz [1] (22.0 dBm)
+\t\t\t* 5180.0 MHz [36] (22.0 dBm) (no IR)
+\t\t\t* 5260.0 MHz [52] (22.0 dBm) (no IR, radar detection)
+\t\t\t* 5340.0 MHz [68] (disabled)
+\t\t\t* 5745.0 MHz [149] (22.0 dBm) (no IR)
+";
+        assert!(parse_ap_allowed_5ghz_channels(sample).is_empty());
+    }
+
+    #[test]
+    fn collects_clean_non_dfs_5ghz_channels() {
+        let sample = "\
+\t\t\t* 2437.0 MHz [6] (22.0 dBm)
+\t\t\t* 5180.0 MHz [36] (23.0 dBm) (no outdoor)
+\t\t\t* 5260.0 MHz [52] (20.0 dBm) (radar detection)
+\t\t\t* 5745.0 MHz [149] (30.0 dBm)
+\t\t\t* 5955.0 MHz [1] (23.0 dBm)
+";
+        let allowed = parse_ap_allowed_5ghz_channels(sample);
+        assert!(allowed.contains(&36));
+        assert!(allowed.contains(&149));
+        assert!(!allowed.contains(&52));
+        assert!(!allowed.contains(&6));
+        assert!(!allowed.contains(&1));
+    }
 }

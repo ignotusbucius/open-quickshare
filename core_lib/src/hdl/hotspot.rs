@@ -199,16 +199,22 @@ const FIVE_GHZ_CANDIDATES: &[FiveGhzCandidate] = &[
     },
 ];
 
-/// Parses `iw list` output and returns the set of 5 GHz channel numbers that
-/// allow standalone AP beaconing (i.e. not marked `disabled`, `no IR`, or
-/// `radar detection`).
+struct FiveGhzCapabilities {
+    has_5ghz_band: bool,
+    allowed_channels: HashSet<u16>,
+}
+
+/// Parses `iw list` output and returns whether the adapter has a 5 GHz band
+/// plus the set of 5 GHz channel numbers that allow standalone AP beaconing
+/// (i.e. not marked `disabled`, `no IR`, or `radar detection`).
 ///
 /// Pre-filtering avoids asking NetworkManager to activate a disallowed channel:
 /// `wpa_supplicant` rejects `no IR` channels immediately, but NetworkManager
 /// retries for ~25 seconds before failing, which blows past Android's BWU
 /// negotiation window.
-fn parse_ap_allowed_5ghz_channels(iw_list: &str) -> HashSet<u16> {
-    let mut allowed = HashSet::new();
+fn parse_5ghz_ap_capabilities(iw_list: &str) -> FiveGhzCapabilities {
+    let mut has_5ghz_band = false;
+    let mut allowed_channels = HashSet::new();
     for line in iw_list.lines() {
         let trimmed = line.trim();
         let Some(rest) = trimmed.strip_prefix("* ") else {
@@ -223,6 +229,7 @@ fn parse_ap_allowed_5ghz_channels(iw_list: &str) -> HashSet<u16> {
         if !(5000.0..5900.0).contains(&freq_mhz) {
             continue;
         }
+        has_5ghz_band = true;
         let Some((ch_str, flags)) = after_mhz.split_once(']') else {
             continue;
         };
@@ -236,18 +243,30 @@ fn parse_ap_allowed_5ghz_channels(iw_list: &str) -> HashSet<u16> {
         {
             continue;
         }
-        allowed.insert(ch);
+        allowed_channels.insert(ch);
     }
-    allowed
+    FiveGhzCapabilities {
+        has_5ghz_band,
+        allowed_channels,
+    }
 }
 
-async fn query_ap_allowed_5ghz_channels() -> HashSet<u16> {
+async fn query_5ghz_ap_capabilities() -> FiveGhzCapabilities {
     match Command::new("iw").arg("list").output().await {
         Ok(o) if o.status.success() => {
-            parse_ap_allowed_5ghz_channels(&String::from_utf8_lossy(&o.stdout))
+            parse_5ghz_ap_capabilities(&String::from_utf8_lossy(&o.stdout))
         }
-        _ => HashSet::new(),
+        _ => FiveGhzCapabilities {
+            has_5ghz_band: false,
+            allowed_channels: HashSet::new(),
+        },
     }
+}
+
+fn has_allowed_candidate(allowed: &HashSet<u16>) -> bool {
+    FIVE_GHZ_CANDIDATES
+        .iter()
+        .any(|c| allowed.contains(&c.channel))
 }
 
 /// Checks whether `ifname` is currently in AP mode via `iw dev <ifname> info`.
@@ -381,12 +400,27 @@ pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
     };
 
     // Only attempt 5 GHz on channels the kernel currently allows for AP mode
-    // (no `no IR` / `disabled` / `radar detection`), so cards in world regdom
-    // `00` (e.g. Intel LAR) fall straight through to 2.4 GHz in milliseconds.
-    let allowed_5ghz = query_ap_allowed_5ghz_channels().await;
+    // (no `no IR` / `disabled` / `radar detection`). If the adapter has a 5 GHz
+    // band whose non-DFS channels are all `no IR` (typical of self-managed
+    // Intel LAR stuck in world regdom `00`), trigger one bounded Wi-Fi rescan
+    // so firmware can learn the local country from nearby 802.11d beacons.
+    let mut caps = query_5ghz_ap_capabilities().await;
+    if caps.has_5ghz_band && !has_allowed_candidate(&caps.allowed_channels) {
+        debug!(
+            "Hotspot: 5 GHz AP channels restricted (no IR); triggering quick rescan on {ifname}"
+        );
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            nmcli(&["device", "wifi", "rescan", "ifname", &ifname]),
+        )
+        .await;
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        caps = query_5ghz_ap_capabilities().await;
+    }
+
     let mut frequency = None;
     for candidate in FIVE_GHZ_CANDIDATES {
-        if !allowed_5ghz.contains(&candidate.channel) {
+        if !caps.allowed_channels.contains(&candidate.channel) {
             debug!(
                 "Hotspot: skipping {} (ch {} restricted or unavailable in iw list)",
                 candidate.label, candidate.channel
@@ -468,7 +502,7 @@ pub async fn start_hotspot() -> Result<HotspotGuard, anyhow::Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_ap_allowed_5ghz_channels;
+    use super::parse_5ghz_ap_capabilities;
 
     #[test]
     fn skips_no_ir_dfs_and_disabled_5ghz_channels() {
@@ -479,7 +513,9 @@ mod tests {
 \t\t\t* 5340.0 MHz [68] (disabled)
 \t\t\t* 5745.0 MHz [149] (22.0 dBm) (no IR)
 ";
-        assert!(parse_ap_allowed_5ghz_channels(sample).is_empty());
+        let caps = parse_5ghz_ap_capabilities(sample);
+        assert!(caps.has_5ghz_band);
+        assert!(caps.allowed_channels.is_empty());
     }
 
     #[test]
@@ -491,11 +527,23 @@ mod tests {
 \t\t\t* 5745.0 MHz [149] (30.0 dBm)
 \t\t\t* 5955.0 MHz [1] (23.0 dBm)
 ";
-        let allowed = parse_ap_allowed_5ghz_channels(sample);
-        assert!(allowed.contains(&36));
-        assert!(allowed.contains(&149));
-        assert!(!allowed.contains(&52));
-        assert!(!allowed.contains(&6));
-        assert!(!allowed.contains(&1));
+        let caps = parse_5ghz_ap_capabilities(sample);
+        assert!(caps.has_5ghz_band);
+        assert!(caps.allowed_channels.contains(&36));
+        assert!(caps.allowed_channels.contains(&149));
+        assert!(!caps.allowed_channels.contains(&52));
+        assert!(!caps.allowed_channels.contains(&6));
+        assert!(!caps.allowed_channels.contains(&1));
+    }
+
+    #[test]
+    fn reports_no_5ghz_band_for_24ghz_only_adapter() {
+        let sample = "\
+\t\t\t* 2412.0 MHz [1] (20.0 dBm)
+\t\t\t* 2437.0 MHz [6] (20.0 dBm)
+";
+        let caps = parse_5ghz_ap_capabilities(sample);
+        assert!(!caps.has_5ghz_band);
+        assert!(caps.allowed_channels.is_empty());
     }
 }
